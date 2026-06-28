@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --c-bg: #161618;
+  --c-sidebar: #1b1b1e;
+  --c-elev: #232327;
+  --c-hover: #2a2a2f;
+  --c-border: #2c2c31;
+  --c-border-strong: #3a3a40;
+  --c-text: #ececee;
+  --c-dim: #8b8b92;
+  --c-faint: #5f5f66;
+  --c-green: #3fb950;
+  --c-green-d: #2a8a3a;
+  --c-green-h: #48c95a;
+  --c-on-accent: #0c1a0f;
+  --c-green-bg: rgba(63, 185, 80, 0.14);
+  --c-green-bd: rgba(63, 185, 80, 0.35);
+  --c-green-text: #a7e6b1;
+  --c-red: #f0635c;
+  --c-yellow: #e3b341;
+  --c-blue: #549bff;
+
+  /* structural surfaces / gradients (re-themed below for light) */
+  --c-active: #34343a;
+  --c-active-text: #ffffff;
+  --c-track: #34343a;
+  --c-surface2: #26262b;
+  --c-statusbar: #121214;
+  --c-statusbar-text: #d6d6da;
+  --c-monogram: #0e0e10;
+  --c-scrollbar: #2e2e33;
+  --grad-titlebar: linear-gradient(180deg, #1f1f22, #1a1a1d);
+  --grad-transport: linear-gradient(180deg, #1c1c1f, #171719);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --c-bg: #f5f6f8;
+  --c-sidebar: #eceef1;
+  --c-elev: #ffffff;
+  --c-hover: #e6e9ee;
+  --c-border: #dadde2;
+  --c-border-strong: #c2c6ce;
+  --c-text: #1b1c20;
+  --c-dim: #5a5e67;
+  --c-faint: #898e98;
+  --c-green: #2c9740;
+  --c-green-d: #206d2e;
+  --c-green-h: #31a948;
+  --c-on-accent: #0c1a0f;
+  --c-green-bg: rgba(44, 151, 64, 0.12);
+  --c-green-bd: rgba(44, 151, 64, 0.4);
+  --c-green-text: #2c9740;
+  --c-red: #d6453f;
+  --c-yellow: #b07d12;
+  --c-blue: #2f6fd6;
+
+  --c-active: #dfe3ea;
+  --c-active-text: #1b1c20;
+  --c-track: #cfd3da;
+  --c-surface2: #e4e7ec;
+  --c-statusbar: #e4e7ec;
+  --c-statusbar-text: #44484f;
+  --c-monogram: #d7dade;
+  --c-scrollbar: #c8ccd3;
+  --grad-titlebar: linear-gradient(180deg, #f1f2f5, #e9ebef);
+  --grad-transport: linear-gradient(180deg, #eef0f3, #e7e9ed);
+}
+
+:root {
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  /* outside-the-window backdrop only shows if the OS window is larger than the
+     rounded chrome; kept dark so corner-rounding looks clean */
+  background: transparent;
+  color: var(--c-text);
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Segoe UI",
+    system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* inputs should still allow text selection / caret */
+input,
+textarea {
+  user-select: text;
+}
+
+/* custom scrollbars to match the mockup */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-scrollbar);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+svg {
+  display: block;
+}
+
+/* Subtitle cue styling. Background + weight here; the color is applied at
+   runtime from the user's choice (see App.tsx managed <style>). */
+video::cue {
+  background-color: rgba(0, 0, 0, 0.6);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* Frameless-window dragging is handled by Tauri's `data-tauri-drag-region`
+   attribute (placed on the title/transport bars). The attribute does not
+   inherit, so interactive children stay clickable automatically. */
+[data-tauri-drag-region] {
+  cursor: default;
+}

@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+dist-ssr/
+
+# rust / tauri
+src-tauri/target/
+src-tauri/gen/
+
+# local data (sqlite db, caches) — never commit
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+*.log
+npm-debug.log*
+*.local
