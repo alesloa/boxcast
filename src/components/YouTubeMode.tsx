@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { api } from "../api/client";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { isTauri } from "../lib/os";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePlayer } from "../store/player";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
 import { parseYouTubeInput } from "../lib/youtube";
@@ -20,6 +21,16 @@ import {
   RotateIcon,
 } from "../lib/icons";
 import type { YoutubeItem, YoutubePlaylistInfo } from "../api/types";
+import { QueuePanel, RowControls, SelectAllControl, BulkBar, downloadMenuItems } from "@downloader";
+
+// In the Tauri webview window.open() is a no-op — it doesn't reach the system
+// browser. Route through the opener plugin; fall back to window.open in a plain
+// browser (dev) where the plugin isn't present.
+function openOnYouTube(videoId: string) {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  if (isTauri()) openUrl(url).catch(() => {});
+  else window.open(url, "_blank");
+}
 
 export function YouTubeMode() {
   const setSettingsOpen = usePlayer((s) => s.setSettingsOpen);
@@ -39,6 +50,7 @@ export function YouTubeMode() {
   const [tab, setTab] = useState<"results" | "favorites">(yu.tab);
   const [selected, setSelected] = useState<YoutubeItem | null>(yu.selected);
   const [blocked, setBlocked] = useState<string | null>(null); // videoId that won't embed
+  const [embedErr, setEmbedErr] = useState<{ code: number; origin: string } | null>(null); // TEMP diag
   const [autoplay, setAutoplay] = useState(() => localStorage.getItem("mc.ytAutoplay") !== "0");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set()); // rail items hidden this session
   const [showRemoved, setShowRemoved] = useState(false); // per-playlist trash strip
@@ -133,7 +145,11 @@ export function YouTubeMode() {
 
   // A video that won't embed: flag it, and skip ahead when autoplaying (capped
   // so an all-blocked list can't spin forever).
-  const onEmbedError = () => {
+  const onEmbedError = (code: number) => {
+    // TEMP diagnostic: surface WHY the embed failed (origin/scheme vs per-video).
+    const origin = window.location.origin;
+    console.error("[yt] embed error code", code, "origin", origin, "video", selected?.videoId);
+    setEmbedErr({ code, origin });
     setBlocked(selected?.videoId ?? null);
     if (autoplay && skipsRef.current < railItems.length) {
       skipsRef.current += 1;
@@ -411,10 +427,13 @@ export function YouTubeMode() {
                     The owner has disabled playback on other sites for this video. You can still
                     watch it on YouTube.
                   </p>
+                  {embedErr && (
+                    <div className="mt-2 select-text text-[10px] text-faint">
+                      diag: {embedErr.origin} · code {embedErr.code}
+                    </div>
+                  )}
                   <button
-                    onClick={() =>
-                      window.open(`https://www.youtube.com/watch?v=${selected.videoId}`, "_blank")
-                    }
+                    onClick={() => openOnYouTube(selected.videoId)}
                     className="mt-4 rounded-[8px] bg-green px-4 py-2 text-[12.5px] font-semibold text-[var(--c-on-accent)] hover:bg-[var(--c-green-h)]"
                   >
                     Open on YouTube
@@ -443,18 +462,12 @@ export function YouTubeMode() {
                 <StarIcon size={14} filled={fav.isFav(selected.videoId)} />
                 {fav.isFav(selected.videoId) ? "Saved" : "Save"}
               </button>
-              <a
-                href={`https://www.youtube.com/watch?v=${selected.videoId}`}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.open(`https://www.youtube.com/watch?v=${selected.videoId}`, "_blank");
-                }}
+              <button
+                onClick={() => openOnYouTube(selected.videoId)}
                 className="flex-none rounded-[7px] border border-border bg-elev px-3 py-[6px] text-[12px] text-dim hover:bg-hover hover:text-text"
               >
                 Open on YouTube
-              </a>
+              </button>
             </div>
           )}
         </div>
@@ -504,6 +517,9 @@ export function YouTubeMode() {
               />
             </button>
           </div>
+
+          {/* Select-all sits left-aligned under the autoplay row (private build only). */}
+          <SelectAllControl items={railItems} />
 
           <div className="flex-1 overflow-auto px-[10px] pb-[14px] pt-[6px]">
             {(tab === "favorites"
@@ -594,16 +610,18 @@ export function YouTubeMode() {
                             label: fav.isFav(it.videoId) ? "Remove from favorites" : "Add to favorites",
                             onClick: () => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it }),
                           },
+                          ...downloadMenuItems(it),
                         ],
                       });
                     }}
                     className={clsx(
-                      "group mb-1 flex w-full items-start gap-[10px] rounded-[9px] p-[8px]",
+                      "group relative mb-1 flex w-full items-start gap-[10px] rounded-[9px] p-[8px]",
                       selected?.videoId === it.videoId
                         ? "border border-green-bd bg-green-bg"
                         : "border border-transparent hover:bg-hover"
                     )}
                   >
+                    <RowControls item={it} />
                     <button onClick={() => setSelected(it)} className="flex min-w-0 flex-1 items-start gap-[10px] text-left">
                       <div className="relative h-[50px] w-[88px] flex-none">
                         <img
@@ -630,44 +648,57 @@ export function YouTubeMode() {
                         <div className="mt-1 truncate text-[11px] text-faint">{it.channelTitle}</div>
                       </div>
                     </button>
-                    <button
-                      onClick={() => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it })}
-                      title={fav.isFav(it.videoId) ? "Remove from favorites" : "Save to favorites"}
-                      className={clsx(
-                        "grid h-7 w-7 flex-none place-items-center rounded-md transition-colors",
-                        fav.isFav(it.videoId)
-                          ? "text-yellow"
-                          : "text-faint opacity-0 hover:text-text group-hover:opacity-100"
-                      )}
-                      aria-label="Toggle favorite"
-                    >
-                      <StarIcon size={15} filled={fav.isFav(it.videoId)} />
-                    </button>
-                    {tab !== "favorites" && (
-                      <>
-                        <button
-                          onClick={() => removeItem(it)}
-                          title={playlistId ? "Remove from this playlist" : "Remove from this list"}
-                          aria-label="Remove"
-                          className="grid h-7 w-7 flex-none place-items-center rounded-md text-faint opacity-0 transition-colors hover:text-red group-hover:opacity-100"
-                        >
-                          <XIcon size={14} />
-                        </button>
-                        <button
-                          onClick={() => banItem(it)}
-                          title="Ban everywhere — never show again"
-                          aria-label="Ban everywhere"
-                          className="grid h-7 w-7 flex-none place-items-center rounded-md text-faint opacity-0 transition-colors hover:text-red group-hover:opacity-100"
-                        >
-                          <BanIcon size={14} />
-                        </button>
-                      </>
+                    {/* Favorited indicator while idle: one star pinned to the right
+                        edge, no reserved layout width. Fades out as the hover
+                        toolbar fades in. */}
+                    {fav.isFav(it.videoId) && (
+                      <div className="pointer-events-none absolute right-[10px] top-1/2 z-0 -translate-y-1/2 text-yellow transition-opacity group-hover:opacity-0">
+                        <StarIcon size={15} filled />
+                      </div>
                     )}
+                    {/* Hover toolbar floats over the title's right edge with a solid
+                        backdrop, so it reserves zero flow width — the title spans the
+                        whole row when idle and is only covered while hovering. */}
+                    <div className="pointer-events-none absolute right-[6px] top-1/2 z-10 flex -translate-y-1/2 items-center gap-[2px] rounded-[8px] bg-elev p-[3px] opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+                      <button
+                        onClick={() => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it })}
+                        title={fav.isFav(it.videoId) ? "Remove from favorites" : "Save to favorites"}
+                        className={clsx(
+                          "grid h-[26px] w-[26px] place-items-center rounded-md transition-colors",
+                          fav.isFav(it.videoId) ? "text-yellow" : "text-faint hover:text-text"
+                        )}
+                        aria-label="Toggle favorite"
+                      >
+                        <StarIcon size={15} filled={fav.isFav(it.videoId)} />
+                      </button>
+                      {tab !== "favorites" && (
+                        <>
+                          <button
+                            onClick={() => removeItem(it)}
+                            title={playlistId ? "Remove from this playlist" : "Remove from this list"}
+                            aria-label="Remove"
+                            className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
+                          >
+                            <XIcon size={14} />
+                          </button>
+                          <button
+                            onClick={() => banItem(it)}
+                            title="Ban everywhere — never show again"
+                            aria-label="Ban everywhere"
+                            className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
+                          >
+                            <BanIcon size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 ))}
               </>
             )}
           </div>
+
+          <BulkBar />
 
           {/* per-playlist trash: songs removed from this playlist, restorable */}
           {playlistId && (playlistHidden.data?.length ?? 0) > 0 && (
@@ -717,6 +748,7 @@ export function YouTubeMode() {
         </div>
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      <QueuePanel />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import { isTauri } from "../lib/os";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../lib/accent";
 import { EyeIcon, EyeOffIcon } from "../lib/icons";
+import { SettingsDownloadRow } from "@downloader";
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -142,6 +143,8 @@ export function SettingsModal() {
               </button>
             </div>
           </div>
+
+          <SettingsDownloadRow />
 
           {/* accent color */}
           <div>

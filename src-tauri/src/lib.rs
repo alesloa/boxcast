@@ -8,18 +8,51 @@ mod radio;
 mod state;
 mod youtube;
 
+#[cfg(feature = "downloader")]
+mod downloader;
+
 use std::sync::Mutex;
 
 use tauri::Manager;
 
 use state::AppState;
 
+/// Bind a free loopback TCP port strictly above 20000 for the in-process proxy
+/// (which also serves the YouTube player host page). Picks a pseudo-random
+/// start so repeated launches don't predictably collide with other local apps,
+/// probes with a real bind, and falls back to an OS-assigned port if the whole
+/// range is somehow taken.
+fn bind_proxy_listener() -> std::io::Result<std::net::TcpListener> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const MIN: u32 = 20001;
+    const MAX: u32 = 60000;
+    let span = MAX - MIN;
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    for i in 0..span {
+        let port = MIN + ((seed + i) % span);
+        if let Ok(l) = std::net::TcpListener::bind(("127.0.0.1", port as u16)) {
+            return Ok(l);
+        }
+    }
+    std::net::TcpListener::bind("127.0.0.1:0")
+}
+
 /// Tauri entry point. Sets up the shared HTTP client, the SQLite database in
-/// the app data dir, and the local media proxy on an OS-assigned free port.
+/// the app data dir, and the local media proxy on a free loopback port (>20000).
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(feature = "downloader")]
+    {
+        builder = builder.plugin(downloader::init());
+    }
+
+    builder
         .setup(|app| {
             // Shared HTTP client with a real desktop UA and transparent
             // gzip/brotli decompression.
@@ -40,7 +73,7 @@ pub fn run() {
 
             // Bind the media proxy to an OS-assigned (guaranteed-free) port on
             // loopback, then hand the listener to axum on the async runtime.
-            let std_listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let std_listener = bind_proxy_listener()?;
             let proxy_port = std_listener.local_addr()?.port();
             std_listener.set_nonblocking(true)?;
             let proxy_client = http.clone();
