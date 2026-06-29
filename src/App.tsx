@@ -6,6 +6,7 @@ import { useFavorites } from "./hooks/useFavorites";
 import { filterChannels } from "./lib/filter";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useSuppressNativeMenu } from "./hooks/useSuppressNativeMenu";
+import { useZoom } from "./hooks/useZoom";
 import { api } from "./api/client";
 import { isTauri } from "./lib/os";
 import { applyAccent, clearAccent } from "./lib/accent";
@@ -55,6 +56,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   useKeyboardShortcuts(videoRef);
   useSuppressNativeMenu();
+  useZoom();
 
   // Auto-advance over dead streams, but stop after a run of failures so an
   // all-dead slice of the list can't churn through thousands of channels.

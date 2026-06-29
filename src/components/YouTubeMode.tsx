@@ -53,6 +53,7 @@ export function YouTubeMode() {
   const [autoplay, setAutoplay] = useState(() => localStorage.getItem("mc.ytAutoplay") !== "0");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set()); // rail items hidden this session
   const [showRemoved, setShowRemoved] = useState(false); // per-playlist trash strip
+  const [filter, setFilter] = useState(""); // instant client-side filter over the loaded list
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const skipsRef = useRef(0);
@@ -62,6 +63,12 @@ export function YouTubeMode() {
   useEffect(() => {
     saveYoutubeUi({ text, query, playlistId, directItems, tab, selected });
   }, [text, query, playlistId, directItems, tab, selected]);
+
+  // Clear the quick-filter whenever the underlying list changes (new playlist,
+  // new search, tab switch) so a stale query never hides a freshly loaded list.
+  useEffect(() => {
+    setFilter("");
+  }, [playlistId, query, tab, directItems]);
 
   // true only for the one restore-mount, so a restored video stays paused
   const restoredSelRef = useRef(yu.selected != null);
@@ -127,7 +134,15 @@ export function YouTubeMode() {
       !bannedIds.has(v.videoId) &&
       (!playlistId || !playlistHiddenIds.has(v.videoId))
   );
-  const railItems = tab === "favorites" ? favVideos : visibleItems;
+  const baseRail = tab === "favorites" ? favVideos : visibleItems;
+  // Instant, client-side filter over whatever list is loaded — matches title or
+  // channel as you type. No network; just narrows the in-memory list.
+  const fq = filter.trim().toLowerCase();
+  const railItems = fq
+    ? baseRail.filter(
+        (v) => v.title.toLowerCase().includes(fq) || v.channelTitle.toLowerCase().includes(fq)
+      )
+    : baseRail;
   const msg = error instanceof Error ? error.message : String(error ?? "");
   const noKey = !!error && msg.includes("no_key");
   const hasList = !!playlistId || !!query || directItems.length > 0;
@@ -225,7 +240,7 @@ export function YouTubeMode() {
   const savePlaylist = () => {
     if (!playlistId) return;
     const title = plInfo?.title ?? "Playlist";
-    const thumbnail = plInfo?.thumbnail ?? railItems[0]?.thumbnail ?? "";
+    const thumbnail = plInfo?.thumbnail ?? baseRail[0]?.thumbnail ?? "";
     fav.toggle({
       ref: playlistId,
       name: title,
@@ -516,6 +531,31 @@ export function YouTubeMode() {
             </button>
           </div>
 
+          {/* Instant filter over the loaded list — type to narrow by title/channel. */}
+          {baseRail.length > 0 && (
+            <div className="px-[14px] pb-[6px] pt-[9px]">
+              <div className="flex items-center gap-[8px] rounded-[9px] border border-border bg-elev px-[10px] py-[6px] text-dim focus-within:border-border-strong">
+                <SearchIcon size={14} />
+                <input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder={`Filter ${playlistId ? "playlist" : tab === "favorites" ? "saved" : "results"}…`}
+                  className="min-w-0 flex-1 bg-transparent text-[12.5px] text-text outline-none placeholder:text-faint"
+                />
+                {filter && (
+                  <button
+                    type="button"
+                    onClick={() => setFilter("")}
+                    aria-label="Clear filter"
+                    className="grid h-[18px] w-[18px] flex-none place-items-center rounded text-faint hover:text-text"
+                  >
+                    <XIcon size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Select-all sits left-aligned under the autoplay row (private build only). */}
           <SelectAllControl items={railItems} />
 
@@ -524,13 +564,15 @@ export function YouTubeMode() {
               ? favPlaylists.length === 0 && railItems.length === 0
               : railItems.length === 0) ? (
               <div className="px-2 pt-10 text-center text-[12.5px] text-faint">
-                {tab === "favorites"
-                  ? "Nothing saved yet. Tap ★ on a video, or Save playlist up top."
-                  : isFetching
-                    ? "Loading…"
-                    : hasList
-                      ? "No results."
-                      : "Results appear here."}
+                {fq
+                  ? `No matches for “${filter.trim()}”.`
+                  : tab === "favorites"
+                    ? "Nothing saved yet. Tap ★ on a video, or Save playlist up top."
+                    : isFetching
+                      ? "Loading…"
+                      : hasList
+                        ? "No results."
+                        : "Results appear here."}
               </div>
             ) : (
               <>
