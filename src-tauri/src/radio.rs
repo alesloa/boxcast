@@ -23,6 +23,7 @@ pub struct RadioSearchParams {
     pub tag: Option<String>,
     pub country: Option<String>,
     pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,6 +53,9 @@ pub struct RadioCountry {
 pub struct RadioFacets {
     pub tags: Vec<FacetCount>,
     pub countries: Vec<RadioCountry>,
+    /// Total stations in the whole radio-browser directory (the library size
+    /// shown next to "Radio" in the sources list), independent of any filter.
+    pub total: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +97,12 @@ struct RawTag {
     name: String,
     #[serde(default)]
     stationcount: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawStats {
+    #[serde(default)]
+    stations: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +166,7 @@ pub async fn search(
         query.push(("country", country));
     }
     query.push(("limit", params.limit.unwrap_or(100).to_string()));
+    query.push(("offset", params.offset.unwrap_or(0).to_string()));
     query.push(("hidebroken", "true".to_string()));
     query.push(("order", "clickcount".to_string()));
     query.push(("reverse", "true".to_string()));
@@ -248,5 +259,24 @@ pub async fn facets(client: &reqwest::Client) -> anyhow::Result<RadioFacets> {
         .collect();
     countries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.code.cmp(&b.code)));
 
-    Ok(RadioFacets { tags, countries })
+    // Grand total from the stats endpoint; if it's unavailable, fall back to the
+    // sum of per-country counts (~2% low, but never zero).
+    let stats_url = format!("https://{server}/json/stats");
+    let total = match client
+        .get(&stats_url)
+        .header(reqwest::header::USER_AGENT, RADIO_UA)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => resp.json::<RawStats>().await.map(|s| s.stations).unwrap_or(0),
+        Err(_) => 0,
+    };
+    let total = if total == 0 {
+        countries.iter().map(|c| c.count).sum()
+    } else {
+        total
+    };
+
+    Ok(RadioFacets { tags, countries, total })
 }

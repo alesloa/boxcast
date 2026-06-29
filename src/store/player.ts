@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Channel } from "../api/types";
 import { applyAccent, clearAccent, getInitialAccent, persistAccent } from "../lib/accent";
-import { loadTvFilters, loadTvCurrent, loadLibraryView, saveLibraryView } from "../lib/uiState";
+import { loadTvFilters, loadTvCurrent, loadLibraryView, saveLibraryView, loadRadioUi } from "../lib/uiState";
 
 export type Mode = "tv" | "radio" | "youtube" | "library";
 export type Theme = "dark" | "light";
@@ -121,6 +121,13 @@ interface PlayerState {
   hdOnly: boolean;
   favoritesOnly: boolean;
 
+  // Radio browse filters (single-select; null = no filter). Radio filters
+  // server-side via radio-browser, so these re-trigger the station query.
+  radioTag: string | null;
+  radioCountry: string | null; // country NAME (radio-browser matches by name)
+  setRadioTag: (tag: string | null) => void;
+  setRadioCountry: (name: string | null) => void;
+
   settingsOpen: boolean;
 
   // transient undo toast (bottom-center pill)
@@ -178,6 +185,7 @@ let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 const tvf = loadTvFilters();
 const tvCurrent = loadTvCurrent();
+const radioUi = loadRadioUi();
 
 export const usePlayer = create<PlayerState>((set, get) => ({
   mode: "tv",
@@ -237,6 +245,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   languages: tvf.languages,
   hdOnly: tvf.hdOnly,
   favoritesOnly: tvf.favoritesOnly,
+
+  radioTag: radioUi.tag,
+  radioCountry: radioUi.country,
 
   settingsOpen: false,
   toast: null,
@@ -338,6 +349,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   toggleLanguage: (name) => set((s) => ({ languages: toggle(s.languages, name) })),
   setHdOnly: (hdOnly) => set({ hdOnly }),
   setFavoritesOnly: (favoritesOnly) => set({ favoritesOnly }),
+  // Single-select, and genre/country are mutually exclusive: picking one clears
+  // the other so the active filter is singular (and its count matches the
+  // sidebar facet). Clicking the active value again clears it.
+  setRadioTag: (tag) => set((s) => ({ radioTag: s.radioTag === tag ? null : tag, radioCountry: null })),
+  setRadioCountry: (name) =>
+    set((s) => ({ radioCountry: s.radioCountry === name ? null : name, radioTag: null })),
   clearFilters: () =>
     set({
       categories: [],

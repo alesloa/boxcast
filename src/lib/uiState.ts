@@ -39,6 +39,8 @@ export interface RadioUi {
   tab: "stations" | "favorites";
   selectedId: string | null;
   selectedStation: Station | null;
+  tag: string | null;
+  country: string | null;
 }
 const RADIO_DEFAULT: RadioUi = {
   text: "",
@@ -46,6 +48,8 @@ const RADIO_DEFAULT: RadioUi = {
   tab: "stations",
   selectedId: null,
   selectedStation: null,
+  tag: null,
+  country: null,
 };
 export const loadRadioUi = () => loadMerge("mc.ui.radio", RADIO_DEFAULT);
 export const saveRadioUi = (v: RadioUi) => save("mc.ui.radio", v);

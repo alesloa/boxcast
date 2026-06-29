@@ -31,6 +31,7 @@ pub fn router(client: reqwest::Client) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/proxy", get(proxy_handler))
+        .route("/yt-player", get(yt_player))
         .layer(CorsLayer::permissive())
         .with_state(client)
 }
@@ -38,6 +39,73 @@ pub fn router(client: reqwest::Client) -> Router {
 async fn health() -> &'static str {
     "ok"
 }
+
+/// Serves a tiny HTML host page for the YouTube IFrame player over this
+/// loopback HTTP origin.
+///
+/// The macOS production webview runs on the `tauri://localhost` scheme, which
+/// YouTube's IFrame API rejects as an invalid embedding origin (error 153),
+/// so every video fails to play in the bundled app even though it works in the
+/// dev server (which is served over `http://localhost`). Embedding the player
+/// inside this `http://127.0.0.1:<port>` page gives it a valid HTTP origin;
+/// the app drives it (load / play / pause / volume / mute) over `postMessage`
+/// and receives ready / state / error events back the same way.
+async fn yt_player() -> Response {
+    let mut out = Response::new(Body::from(YT_PLAYER_HTML));
+    out.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    out.headers_mut()
+        .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    out
+}
+
+const YT_PLAYER_HTML: &str = r##"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#p{width:100%;height:100%}</style>
+</head>
+<body>
+<div id="p"></div>
+<script>
+(function(){
+  var player=null, ready=false, pLoad=null, pVol=null, pMute=null;
+  function send(t,d){ try{ parent.postMessage({__mcyt:1,type:t,data:d}, '*'); }catch(e){} }
+  window.onYouTubeIframeAPIReady=function(){
+    player=new YT.Player('p',{
+      width:'100%',height:'100%',
+      playerVars:{autoplay:0,playsinline:1,rel:0,modestbranding:1},
+      events:{
+        onReady:function(){
+          ready=true;
+          if(pVol!=null){player.setVolume(pVol);pVol=null;}
+          if(pMute!=null){pMute?player.mute():player.unMute();pMute=null;}
+          if(pLoad){player.loadVideoById(pLoad);pLoad=null;}
+          send('ready');
+        },
+        onStateChange:function(e){ send('state',e.data); },
+        onError:function(e){ send('error',e.data); }
+      }
+    });
+  };
+  window.addEventListener('message',function(e){
+    var m=e.data; if(!m||m.__mccmd!==1) return;
+    try{
+      if(m.cmd==='load'){ if(ready&&player){player.loadVideoById(m.id);} else {pLoad=m.id;} }
+      else if(m.cmd==='play'){ if(ready&&player)player.playVideo(); }
+      else if(m.cmd==='pause'){ if(ready&&player)player.pauseVideo(); }
+      else if(m.cmd==='volume'){ if(ready&&player){player.setVolume(m.value);} else {pVol=m.value;} }
+      else if(m.cmd==='mute'){ if(ready&&player){m.value?player.mute():player.unMute();} else {pMute=m.value;} }
+    }catch(_){}
+  });
+  var s=document.createElement('script'); s.src='https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
+"##;
 
 #[derive(Debug, Deserialize)]
 struct ProxyQuery {

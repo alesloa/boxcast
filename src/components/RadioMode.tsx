@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { api, proxiedUrl } from "../api/client";
 import { isTauri } from "../lib/os";
@@ -86,6 +86,8 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
   const setStats = usePlayer((s) => s.setStats);
   const setRadioCount = usePlayer((s) => s.setRadioCount);
   const setTransport = usePlayer((s) => s.setTransport);
+  const radioTag = usePlayer((s) => s.radioTag);
+  const radioCountry = usePlayer((s) => s.radioCountry);
 
   const fav = useFavorites("radio");
   const ru = useRef(loadRadioUi()).current;
@@ -95,20 +97,45 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
   const [selectedId, setSelectedId] = useState<string | null>(ru.selectedId);
   const [selectedStation, setSelectedStation] = useState<Station | null>(ru.selectedStation);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLButtonElement>(null);
 
   // persist this tab's browsing state so it restores on return / restart
   useEffect(() => {
-    saveRadioUi({ text, query, tab, selectedId, selectedStation });
-  }, [text, query, tab, selectedId, selectedStation]);
+    saveRadioUi({ text, query, tab, selectedId, selectedStation, tag: radioTag, country: radioCountry });
+  }, [text, query, tab, selectedId, selectedStation, radioTag, radioCountry]);
 
-  const { data, isFetching } = useQuery({
-    queryKey: ["radio", query],
-    queryFn: () => api.radioSearch({ q: query || undefined, limit: 100 }),
+  // Live-search like Live TV: radio search hits the network, so debounce typing
+  // into the actual query (fire after a pause, not on every keystroke). Enter
+  // still searches immediately via the form's onSubmit.
+  useEffect(() => {
+    const t = text.trim();
+    if (t === query) return;
+    const id = window.setTimeout(() => setQuery(t), 400);
+    return () => window.clearTimeout(id);
+  }, [text, query]);
+
+  // Paginated station search: each page is 100 stations, accumulated across
+  // "Load more". The query key includes the genre/country filters, so changing
+  // a filter (or the search) starts a fresh page-0 fetch automatically.
+  const { data, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ["radio", query, radioTag, radioCountry],
+    queryFn: ({ pageParam }) =>
+      api.radioSearch({
+        q: query || undefined,
+        tag: radioTag || undefined,
+        country: radioCountry || undefined,
+        limit: 100,
+        offset: pageParam,
+      }),
     enabled: isTauri(),
     staleTime: 5 * 60 * 1000,
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.length === 100 ? allPages.length * 100 : undefined,
   });
 
-  const stations = data ?? [];
+  const stations = data?.pages.flat() ?? [];
 
   // Saved stations, reconstructed from each favorite's stored metadata so they
   // play without a fresh search.
@@ -123,11 +150,46 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
 
   const railStations = tab === "favorites" ? favStations : stations;
 
-  // Keep the sidebar/status station count in sync with the current search.
-  // Don't reset on unmount — the count should persist when you leave Radio.
+  // Facet counts (shared cached query) give the true size of the active filter,
+  // so the rail header shows that total directly — matching the sidebar —
+  // instead of the lazily-loaded count. Genre/country are mutually exclusive,
+  // so at most one is active at a time.
+  const facets = useQuery({
+    queryKey: ["radio-facets"],
+    queryFn: () => api.radioFacets(),
+    enabled: isTauri(),
+    staleTime: Infinity,
+  });
+  const filterTotal: number | null = radioTag
+    ? facets.data?.tags.find((t) => t.name === radioTag)?.count ?? null
+    : radioCountry
+      ? facets.data?.countries.find((c) => c.name === radioCountry)?.count ?? null
+      : query
+        ? null // free-text search has no precomputed total
+        : facets.data?.total ?? null; // unfiltered = the whole directory
+  const headerCount = filterTotal ?? stations.length;
+
+  // Keep the sidebar/status station count in sync. Don't reset on unmount —
+  // the count should persist when you leave Radio.
   useEffect(() => {
-    if (data) setRadioCount(stations.length);
-  }, [data, stations.length, setRadioCount]);
+    setRadioCount(headerCount);
+  }, [headerCount, setRadioCount]);
+
+  // Infinite scroll: when the "Load more" sentinel scrolls near the viewport,
+  // fetch the next page automatically (the button stays a manual fallback).
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    const root = scrollRef.current;
+    if (!el || !root || !hasNextPage) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) fetchNextPage();
+      },
+      { root, rootMargin: "300px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, stations.length, tab]);
 
   const playStation = (st: Station) => {
     setSelectedId(st.id);
@@ -229,28 +291,6 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
     <div className="flex min-w-0 flex-1 flex-col">
       <audio ref={audioRef} className="hidden" />
 
-      {/* search */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          setQuery(text.trim());
-        }}
-        className="flex h-[52px] flex-none items-center gap-3 border-b border-border px-4"
-      >
-        <div className="text-[13px] text-dim">
-          <b className="font-[650] text-text">{stations.length}</b> stations
-        </div>
-        <div className="flex flex-1 items-center gap-[9px] rounded-[9px] border border-border bg-elev px-3 py-2 text-dim focus-within:border-border-strong">
-          <SearchIcon size={15} />
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Search stations, genres, countries…"
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-text outline-none placeholder:text-faint"
-          />
-        </div>
-      </form>
-
       <div className="flex min-h-0 flex-1">
         {/* now playing / visualizer */}
         <div className="flex flex-1 flex-col gap-3 p-4" style={{ minWidth: 0 }}>
@@ -302,27 +342,66 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
 
         {/* station rail */}
         <div className="flex w-[330px] flex-none flex-col border-l border-border">
-          <div className="flex items-center gap-1 px-[12px] pb-2 pt-3">
-            <button
-              onClick={() => setTab("stations")}
-              className={clsx(
-                "rounded-[6px] px-2 py-1 text-[11px] font-bold tracking-[.6px] transition-colors",
-                tab === "stations" ? "bg-elev text-text" : "text-faint hover:text-dim"
+          <div className="flex flex-col gap-[8px] border-b border-border px-[12px] pb-[10px] pt-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setTab("stations")}
+                  className={clsx(
+                    "rounded-[6px] px-2 py-1 text-[11px] font-bold tracking-[.6px] transition-colors",
+                    tab === "stations" ? "bg-elev text-text" : "text-faint hover:text-dim"
+                  )}
+                >
+                  STATIONS
+                </button>
+                <button
+                  onClick={() => setTab("favorites")}
+                  className={clsx(
+                    "flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px] font-bold tracking-[.6px] transition-colors",
+                    tab === "favorites" ? "bg-elev text-text" : "text-faint hover:text-dim"
+                  )}
+                >
+                  <StarIcon size={12} filled={tab === "favorites"} /> FAVORITES{fav.count ? ` (${fav.count})` : ""}
+                </button>
+              </div>
+              {tab === "stations" && (
+                <span className="text-[11px] font-medium text-faint">
+                  {headerCount.toLocaleString("en-US")}
+                </span>
               )}
-            >
-              STATIONS
-            </button>
-            <button
-              onClick={() => setTab("favorites")}
-              className={clsx(
-                "flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px] font-bold tracking-[.6px] transition-colors",
-                tab === "favorites" ? "bg-elev text-text" : "text-faint hover:text-dim"
-              )}
-            >
-              <StarIcon size={12} filled={tab === "favorites"} /> FAVORITES{fav.count ? ` (${fav.count})` : ""}
-            </button>
+            </div>
+            {tab === "stations" && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setQuery(text.trim());
+                }}
+                className="flex items-center gap-[8px] rounded-[8px] border border-border bg-elev px-[9px] py-[6px] text-dim focus-within:border-border-strong"
+              >
+                <SearchIcon size={14} />
+                <input
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Filter stations…"
+                  className="min-w-0 flex-1 bg-transparent text-[12.5px] text-text outline-none placeholder:text-faint"
+                />
+                {text && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setText("");
+                      setQuery("");
+                    }}
+                    aria-label="Clear filter"
+                    className="text-[13px] leading-none text-faint hover:text-text"
+                  >
+                    ✕
+                  </button>
+                )}
+              </form>
+            )}
           </div>
-          <div className="flex-1 overflow-auto px-[10px] pb-[14px] pt-[6px]">
+          <div ref={scrollRef} className="flex-1 overflow-auto px-[10px] pb-[14px] pt-[6px]">
             {railStations.length === 0 ? (
               <div className="px-2 pt-10 text-center text-[12.5px] text-faint">
                 {tab === "favorites"
@@ -332,7 +411,8 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
                     : "No stations."}
               </div>
             ) : (
-              railStations.map((st) => (
+              <>
+                {railStations.map((st) => (
                 <div
                   key={st.id}
                   onContextMenu={(e) => {
@@ -382,7 +462,18 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
                     <StarIcon size={15} filled={fav.isFav(st.id)} />
                   </button>
                 </div>
-              ))
+                ))}
+                {tab === "stations" && hasNextPage && (
+                  <button
+                    ref={loadMoreRef}
+                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                    className="mb-1 mt-1 w-full rounded-[9px] border border-border bg-elev px-[10px] py-[9px] text-[12px] font-semibold text-dim transition-colors hover:bg-hover hover:text-text disabled:opacity-60"
+                  >
+                    {isFetchingNextPage ? "Loading…" : "Load more"}
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

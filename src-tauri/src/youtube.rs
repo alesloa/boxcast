@@ -249,6 +249,32 @@ pub async fn playlist(
     })
 }
 
+/// Fetch EVERY item of a public playlist by following pagination. The YouTube
+/// API caps `playlistItems` at 50 per page, so a 74-video playlist needs two
+/// requests; this loops until the playlist is exhausted, bounded by a sane page
+/// cap so a pathological playlist can't spin forever.
+pub async fn playlist_all(
+    client: &reqwest::Client,
+    key: &str,
+    playlist_id: &str,
+) -> Result<YoutubeResults, String> {
+    const MAX_PAGES: usize = 40; // up to 40 * 50 = 2000 items
+    let mut all: Vec<YoutubeItem> = Vec::new();
+    let mut token: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let page = playlist(client, key, playlist_id, token.as_deref()).await?;
+        all.extend(page.items);
+        match page.next_page_token {
+            Some(t) if !t.is_empty() => token = Some(t),
+            _ => break,
+        }
+    }
+    Ok(YoutubeResults {
+        items: all,
+        next_page_token: None,
+    })
+}
+
 // --- Playlist info (title / thumbnail) ------------------------------------
 
 #[derive(Debug, Serialize)]

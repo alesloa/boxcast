@@ -84,7 +84,14 @@ pub async fn youtube_playlist(
     page_token: Option<String>,
 ) -> Result<YoutubeResults, String> {
     let key = youtube_key(&state)?;
-    youtube::playlist(&state.http, &key, &playlist_id, page_token.as_deref()).await
+    // No explicit page → return the WHOLE playlist (follows pagination past the
+    // API's 50-item page cap). An explicit token still fetches a single page.
+    match page_token.as_deref() {
+        Some(pt) if !pt.is_empty() => {
+            youtube::playlist(&state.http, &key, &playlist_id, Some(pt)).await
+        }
+        _ => youtube::playlist_all(&state.http, &key, &playlist_id).await,
+    }
 }
 
 #[tauri::command]
