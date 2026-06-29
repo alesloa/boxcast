@@ -50,7 +50,6 @@ export function YouTubeMode() {
   const [tab, setTab] = useState<"results" | "favorites">(yu.tab);
   const [selected, setSelected] = useState<YoutubeItem | null>(yu.selected);
   const [blocked, setBlocked] = useState<string | null>(null); // videoId that won't embed
-  const [embedErr, setEmbedErr] = useState<{ code: number; origin: string } | null>(null); // TEMP diag
   const [autoplay, setAutoplay] = useState(() => localStorage.getItem("mc.ytAutoplay") !== "0");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set()); // rail items hidden this session
   const [showRemoved, setShowRemoved] = useState(false); // per-playlist trash strip
@@ -145,11 +144,7 @@ export function YouTubeMode() {
 
   // A video that won't embed: flag it, and skip ahead when autoplaying (capped
   // so an all-blocked list can't spin forever).
-  const onEmbedError = (code: number) => {
-    // TEMP diagnostic: surface WHY the embed failed (origin/scheme vs per-video).
-    const origin = window.location.origin;
-    console.error("[yt] embed error code", code, "origin", origin, "video", selected?.videoId);
-    setEmbedErr({ code, origin });
+  const onEmbedError = () => {
     setBlocked(selected?.videoId ?? null);
     if (autoplay && skipsRef.current < railItems.length) {
       skipsRef.current += 1;
@@ -427,11 +422,6 @@ export function YouTubeMode() {
                     The owner has disabled playback on other sites for this video. You can still
                     watch it on YouTube.
                   </p>
-                  {embedErr && (
-                    <div className="mt-2 select-text text-[10px] text-faint">
-                      diag: {embedErr.origin} · code {embedErr.code}
-                    </div>
-                  )}
                   <button
                     onClick={() => openOnYouTube(selected.videoId)}
                     className="mt-4 rounded-[8px] bg-green px-4 py-2 text-[12.5px] font-semibold text-[var(--c-on-accent)] hover:bg-[var(--c-green-h)]"
