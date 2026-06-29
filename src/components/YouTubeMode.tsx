@@ -56,6 +56,7 @@ export function YouTubeMode() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const skipsRef = useRef(0);
+  const activeRowRef = useRef<HTMLDivElement>(null); // now-playing row, for scroll-into-view
 
   // persist this tab's browsing state so it restores on return / restart
   useEffect(() => {
@@ -326,6 +327,13 @@ export function YouTubeMode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [railItems, selected]);
 
+  // Keep the now-playing row visible: when the selection advances (next/prev/
+  // auto-advance/click) scroll it into view. "nearest" = no jump when already
+  // on screen.
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selected?.videoId]);
+
   if (noKey) {
     return (
       <div className="flex min-w-0 flex-1 items-center justify-center p-6">
@@ -588,6 +596,7 @@ export function YouTubeMode() {
                 {railItems.map((it) => (
                   <div
                     key={it.videoId}
+                    ref={selected?.videoId === it.videoId ? activeRowRef : undefined}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       setMenu({

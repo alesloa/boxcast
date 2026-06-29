@@ -62,6 +62,9 @@ export function ContextMenu({
           <button
             disabled={it.disabled}
             title={it.disabled ? it.disabledHint : undefined}
+            // keep focus on the underlying element (e.g. a text input) so the
+            // clipboard actions in GlobalContextMenu still target it
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               if (it.disabled || it.submenu) return;
               it.onClick?.();

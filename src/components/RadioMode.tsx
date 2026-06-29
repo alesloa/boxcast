@@ -99,6 +99,7 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
+  const activeRowRef = useRef<HTMLDivElement>(null); // now-playing row, for scroll-into-view
 
   // persist this tab's browsing state so it restores on return / restart
   useEffect(() => {
@@ -227,6 +228,12 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [railStations, selectedId]);
+
+  // Keep the playing station visible: scroll it into view when the selection
+  // advances (next/prev/click). "nearest" avoids jumping when already on screen.
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedId]);
 
   // point the audio element at the selected station, but don't auto-play or
   // buffer — the play/pause sync effect below starts it only when `playing` is
@@ -415,6 +422,7 @@ export function RadioMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement> 
                 {railStations.map((st) => (
                 <div
                   key={st.id}
+                  ref={st.id === selectedId ? activeRowRef : undefined}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setMenu({
