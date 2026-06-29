@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
 import type { Channel } from "../api/types";
@@ -44,6 +44,16 @@ export function ChannelList({
     estimateSize: () => 58,
     overscan: 12,
   });
+
+  // Keep the playing channel in view: scroll the virtual list to it when the
+  // current channel changes (next/prev/auto-advance). "auto" only scrolls when
+  // it's off screen.
+  useEffect(() => {
+    if (!current) return;
+    const idx = channels.findIndex((c) => c.id === current.id);
+    if (idx >= 0) rows.scrollToIndex(idx, { align: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, channels]);
 
   return (
     <div className="flex min-h-0 w-[330px] flex-none flex-col border-l border-border">

@@ -23,6 +23,7 @@ import { YouTubeMode } from "./components/YouTubeMode";
 import { LibraryMode } from "./components/LibraryMode";
 import { SettingsModal } from "./components/SettingsModal";
 import { Toast } from "./components/Toast";
+import { GlobalContextMenu } from "./components/GlobalContextMenu";
 
 const SOURCE_LABEL: Record<string, string> = {
   tv: "iptv-org",
@@ -208,6 +209,7 @@ export default function App() {
 
       {settingsOpen && <SettingsModal />}
       <Toast />
+      <GlobalContextMenu />
     </div>
   );
 }

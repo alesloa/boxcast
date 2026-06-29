@@ -229,6 +229,13 @@ export function LibraryMode({ audioRef }: { audioRef: RefObject<HTMLAudioElement
     scrolledForRef.current = viewKey;
   }, [viewKey, visible, playingTrack?.id]);
 
+  // Follow the now-playing track when it changes (next/prev/auto-advance), like
+  // Spotify — so you always see what's playing. No-op when the track isn't in
+  // the current view (its row ref is unmounted).
+  useEffect(() => {
+    playingRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [playingTrack?.id]);
+
   const addFolder = async () => {
     const picked = await open({ directory: true, multiple: false, title: "Add music folder" });
     if (typeof picked !== "string") return;
