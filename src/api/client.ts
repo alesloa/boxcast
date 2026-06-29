@@ -36,6 +36,7 @@ export const api = {
     tag?: string;
     country?: string;
     limit?: number;
+    offset?: number;
   }) => invoke<Station[]>("radio_search", { params }),
   radioFacets: () => invoke<RadioFacets>("radio_facets"),
 

@@ -20,6 +20,14 @@ function fmtCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+// Radio facets carry only an ISO 3166-1 alpha-2 code (no precomputed flag like
+// the TV catalog), so derive the regional-indicator emoji from the code.
+function flagFromCode(code: string): string {
+  const cc = code.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return "🏳️";
+  return String.fromCodePoint(...[...cc].map((ch) => 127397 + ch.charCodeAt(0)));
+}
+
 function LibrarySidebar() {
   const view = usePlayer((s) => s.libraryView);
   const setView = usePlayer((s) => s.setLibraryView);
@@ -199,6 +207,69 @@ function LibrarySidebar() {
   );
 }
 
+function RadioSidebar() {
+  const radioTag = usePlayer((s) => s.radioTag);
+  const radioCountry = usePlayer((s) => s.radioCountry);
+  const setRadioTag = usePlayer((s) => s.setRadioTag);
+  const setRadioCountry = usePlayer((s) => s.setRadioCountry);
+
+  // radio-browser facets: top genres + countries with station counts. Fetched
+  // once and shared (react-query dedupes if RadioMode reads it too).
+  const facets = useQuery({
+    queryKey: ["radio-facets"],
+    queryFn: () => api.radioFacets(),
+    enabled: isTauri(),
+    staleTime: Infinity,
+  });
+
+  const tags = facets.data?.tags.slice(0, 40) ?? [];
+  const countries = facets.data?.countries ?? [];
+
+  return (
+    <>
+      <GroupLabel>GENRES</GroupLabel>
+      {tags.map((t) => {
+        const sel = radioTag === t.name;
+        return (
+          <button
+            key={t.name}
+            onClick={() => setRadioTag(t.name)}
+            className={clsx(
+              "flex items-center gap-[9px] rounded-[7px] px-[9px] py-[6px] text-left text-[12.5px] transition-colors",
+              sel ? "font-medium text-text" : "text-dim hover:bg-hover hover:text-text"
+            )}
+          >
+            <span className={clsx("w-[14px] text-center", sel ? "text-green" : "text-faint")}>
+              {sel ? "✓" : ""}
+            </span>
+            <span className="min-w-0 truncate capitalize">{t.name}</span>
+            <span className="ml-auto text-[10.5px] text-faint">{fmtCount(t.count)}</span>
+          </button>
+        );
+      })}
+
+      <GroupLabel>COUNTRY</GroupLabel>
+      {countries.map((c) => {
+        const sel = radioCountry === c.name;
+        return (
+          <button
+            key={c.code || c.name}
+            onClick={() => setRadioCountry(c.name)}
+            className={clsx(
+              "flex items-center gap-[9px] rounded-[7px] px-[9px] py-[6px] text-left text-[12.5px] transition-colors",
+              sel ? "font-medium text-text" : "text-dim hover:bg-hover hover:text-text"
+            )}
+          >
+            <span className="text-[14px] leading-none">{flagFromCode(c.code)}</span>
+            <span className="min-w-0 truncate">{c.name}</span>
+            <span className="ml-auto text-[10.5px] text-faint">{fmtCount(c.count)}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
 export function Sidebar({
   facets,
   totalChannels,
@@ -219,6 +290,16 @@ export function Sidebar({
   const toggleCountry = usePlayer((s) => s.toggleCountry);
   const setFavoritesOnly = usePlayer((s) => s.setFavoritesOnly);
 
+  // Whole-directory station total for the "Radio" source badge (like Live TV's
+  // total channel count) — stable, independent of the selected genre/country.
+  // Shares the cached facets query with RadioSidebar.
+  const radioFacets = useQuery({
+    queryKey: ["radio-facets"],
+    queryFn: () => api.radioFacets(),
+    enabled: isTauri(),
+    staleTime: Infinity,
+  });
+
   const sources = [
     {
       id: "tv" as const,
@@ -226,7 +307,7 @@ export function Sidebar({
       icon: <TvIcon size={15} />,
       count: totalChannels,
     },
-    { id: "radio" as const, label: "Radio", icon: <RadioIcon size={15} />, count: radioCount },
+    { id: "radio" as const, label: "Radio", icon: <RadioIcon size={15} />, count: radioFacets.data?.total ?? radioCount },
     { id: "youtube" as const, label: "YouTube", icon: <YouTubeIcon size={15} />, count: youtubeCount },
     { id: "library" as const, label: "My Music", icon: <MusicIcon size={15} />, count: null },
   ];
@@ -319,6 +400,8 @@ export function Sidebar({
           </button>
         </>
       )}
+
+      {mode === "radio" && <RadioSidebar />}
 
       {mode === "library" && <LibrarySidebar />}
     </aside>

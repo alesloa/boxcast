@@ -64,6 +64,7 @@ export interface Station {
 export interface RadioFacets {
   tags: FacetCount[];
   countries: { code: string; name: string; count: number }[];
+  total: number;
 }
 
 export interface YoutubeItem {
