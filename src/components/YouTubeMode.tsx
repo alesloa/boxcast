@@ -99,9 +99,15 @@ export function YouTubeMode() {
   const [sources, setSources] = useState<SourceRef[]>(yu.sources);
   const [activeCollectionId, setActiveCollectionId] = useState<string | null>(yu.activeCollectionId);
   const [collections, setCollectionsState] = useState<Collection[]>([]);
-  const setCollections = (list: Collection[]) => {
-    setCollectionsState(list);
-    saveCollections(list);
+  // Always fold onto the LATEST state (functional updater) so rapid successive
+  // edits — e.g. deleting several songs in a row — don't clobber each other via
+  // a stale `collections` closure. Persist the freshly-computed list each time.
+  const setCollections = (updater: Collection[] | ((prev: Collection[]) => Collection[])) => {
+    setCollectionsState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveCollections(next);
+      return next;
+    });
   };
   const mergeMode = sources.length > 0;
   const activeCollection = activeCollectionId
@@ -356,11 +362,10 @@ export function YouTubeMode() {
     if (it.videoId === selected?.videoId) advanceNext();
     if (mergeMode) {
       if (activeCollectionId) {
-        setCollections(setSongRemoved(collections, activeCollectionId, it.videoId, true));
         const cid = activeCollectionId;
-        showToast("Removed from collection", async () => {
-          const fresh = await loadCollections();
-          setCollections(setSongRemoved(fresh, cid, it.videoId, false));
+        setCollections((prev) => setSongRemoved(prev, cid, it.videoId, true));
+        showToast("Removed from collection", () => {
+          setCollections((prev) => setSongRemoved(prev, cid, it.videoId, false));
         });
       } else {
         hideItem(it.videoId);
@@ -459,13 +464,19 @@ export function YouTubeMode() {
     setTab("results");
     const next = [...seed, info];
     setSources(next);
-    if (activeCollectionId) setCollections(addSource(collections, activeCollectionId, info));
+    if (activeCollectionId) {
+      const cid = activeCollectionId;
+      setCollections((prev) => addSource(prev, cid, info));
+    }
   };
 
   const removeSourceFromMix = (playlistId: string) => {
     const next = sources.filter((s) => s.playlistId !== playlistId);
     setSources(next);
-    if (activeCollectionId) setCollections(removeSource(collections, activeCollectionId, playlistId));
+    if (activeCollectionId) {
+      const cid = activeCollectionId;
+      setCollections((prev) => removeSource(prev, cid, playlistId));
+    }
     if (next.length === 0) setActiveCollectionId(null);
   };
 
@@ -481,9 +492,11 @@ export function YouTubeMode() {
   const [mixOpen, setMixOpen] = useState(false); // build-bar chips collapsed by default to save space
 
   const submitSaveCollection = () => {
-    const { next, created } = createCollection(collections, savingName ?? "", sources);
+    // Build `created` off an empty list (deterministic id/dedupe/timestamps),
+    // then prepend it functionally so we don't snapshot a stale `collections`.
+    const { created } = createCollection([], savingName ?? "", sources);
     if (created) {
-      setCollections(next);
+      setCollections((prev) => [created, ...prev]);
       setActiveCollectionId(created.id);
     }
     setSavingName(null);
@@ -505,13 +518,14 @@ export function YouTubeMode() {
   };
 
   const submitRenameCollection = () => {
-    if (renamingColl) setCollections(renameCollection(collections, renamingColl, renameCollText));
+    const id = renamingColl;
+    if (id) setCollections((prev) => renameCollection(prev, id, renameCollText));
     setRenamingColl(null);
     setRenameCollText("");
   };
 
   const removeCollection = (id: string) => {
-    setCollections(deleteCollection(collections, id));
+    setCollections((prev) => deleteCollection(prev, id));
     if (activeCollectionId === id) clearMix();
   };
 
@@ -1146,7 +1160,7 @@ export function YouTubeMode() {
             </div>
           )}
 
-          {mergeMode && (
+          {mergeMode && tab === "results" && (
             <div className="mx-[12px] mb-1 rounded-[10px] border border-border-strong bg-elev p-[10px]">
               <div className="flex items-center justify-between gap-2">
                 <button
