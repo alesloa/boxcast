@@ -65,6 +65,11 @@ export function YouTubeMode() {
   const setPlaying = usePlayer((s) => s.setPlaying);
   const setTransport = usePlayer((s) => s.setTransport);
   const showToast = usePlayer((s) => s.showToast);
+  // Player controls live in the bottom transport bar now; YouTube just reads
+  // them from the shared store (same shuffle/repeat library uses).
+  const autoplay = usePlayer((s) => s.autoplay);
+  const shuffle = usePlayer((s) => s.shuffle);
+  const repeat = usePlayer((s) => s.repeat);
   const fav = useFavorites("youtube");
   const qc = useQueryClient();
 
@@ -76,7 +81,6 @@ export function YouTubeMode() {
   const [tab, setTab] = useState<"results" | "favorites">(yu.tab);
   const [selected, setSelected] = useState<YoutubeItem | null>(yu.selected);
   const [blocked, setBlocked] = useState<string | null>(null); // videoId that won't embed
-  const [autoplay, setAutoplay] = useState(() => localStorage.getItem("mc.ytAutoplay") !== "0");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set()); // rail items hidden this session
   const [showRemoved, setShowRemoved] = useState(false); // per-playlist trash strip
   const [filter, setFilter] = useState(""); // instant client-side filter over the loaded list
@@ -196,15 +200,42 @@ export function YouTubeMode() {
   const noKey = !!error && msg.includes("no_key");
   const hasList = !!playlistId || !!query || directItems.length > 0;
 
+  // Restart-current-video handle, filled in once the player hook returns (used
+  // for repeat-one). Held in a ref so the end handler below can reach it.
+  const replayRef = useRef<() => void>(() => {});
+
+  // Move to the next track. Honors shuffle (random pick, never the current one);
+  // otherwise sequential with wrap. Used by manual next, hide/remove, and the
+  // embed-error skip.
   const advanceNext = () => {
     const list = playList;
+    if (!list.length) return;
     const idx = list.findIndex((v) => v.videoId === selected?.videoId);
-    if (list.length && idx >= 0) setSelected(list[(idx + 1) % list.length]);
+    if (shuffle && list.length > 1) {
+      let r = idx;
+      while (r === idx) r = Math.floor(Math.random() * list.length);
+      setSelected(list[r]);
+      return;
+    }
+    setSelected(list[idx >= 0 ? (idx + 1) % list.length : 0]);
   };
 
-  // When a video ends, roll to the next item if autoplay is on.
+  // End-of-video behavior. Autoplay is the master gate; shuffle + repeat shape
+  // what plays next. Repeat-one replays the same video; repeat-off stops at the
+  // end of a non-shuffled list.
   const onVideoEnded = () => {
-    if (autoplay) advanceNext();
+    if (!autoplay) return;
+    if (repeat === "one") {
+      replayRef.current();
+      return;
+    }
+    const list = playList;
+    const idx = list.findIndex((v) => v.videoId === selected?.videoId);
+    if (!shuffle && repeat === "off" && idx === list.length - 1) {
+      setPlaying(false);
+      return;
+    }
+    advanceNext();
   };
 
   // A video that won't embed: flag it, and skip ahead when autoplaying (capped
@@ -224,17 +255,12 @@ export function YouTubeMode() {
   };
 
   // Drive the embedded player from the shared transport store (bottom bar).
-  useYouTubePlayer(hostRef, selected?.videoId ?? null, {
+  const { replay } = useYouTubePlayer(hostRef, selected?.videoId ?? null, {
     onEnded: onVideoEnded,
     onError: onEmbedError,
     onPlaying,
   });
-
-  const toggleAutoplay = () => {
-    const v = !autoplay;
-    setAutoplay(v);
-    localStorage.setItem("mc.ytAutoplay", v ? "1" : "0");
-  };
+  replayRef.current = replay;
 
   // Drop an item from the current list for this session (not from YouTube).
   const hideItem = (id: string) => {
@@ -396,10 +422,13 @@ export function YouTubeMode() {
     }
   };
 
+  // Sidebar badge tracks the list the rail actually shows (after session-hide,
+  // global-ban, and per-playlist removal) — not the raw query length, so it
+  // drops to 99 the moment you delete a song from a playlist.
   useEffect(() => {
-    setYoutubeCount(hasList ? items.length : null);
+    setYoutubeCount(hasList ? visibleItems.length : null);
     return () => setYoutubeCount(null);
-  }, [items.length, hasList, setYoutubeCount]);
+  }, [visibleItems.length, hasList, setYoutubeCount]);
 
   useEffect(() => {
     if (items.length && !selected) setSelected(items[0]);
@@ -422,20 +451,25 @@ export function YouTubeMode() {
     });
   }, [selected, setNowPlaying, setPlaying]);
 
-  // Register prev/next over the visible result list for the bottom bar.
+  // Register prev/next over the visible result list for the bottom bar. Manual
+  // next/prev honor shuffle (random pick) and always wrap — independent of the
+  // autoplay gate, which only governs what happens when a video ends on its own.
   useEffect(() => {
     const list = playList;
     const idx = list.findIndex((v) => v.videoId === selected?.videoId);
-    setTransport(
-      () => {
-        if (list.length) setSelected(list[(idx + 1 + list.length) % list.length]);
-      },
-      () => {
-        if (list.length) setSelected(list[(idx - 1 + list.length) % list.length]);
+    const pick = (dir: 1 | -1) => {
+      if (!list.length) return;
+      if (shuffle) {
+        if (list.length === 1) return setSelected(list[0]);
+        let r = idx;
+        while (r === idx) r = Math.floor(Math.random() * list.length);
+        return setSelected(list[r]);
       }
-    );
+      setSelected(list[(idx + dir + list.length) % list.length]);
+    };
+    setTransport(() => pick(1), () => pick(-1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playList, selected]);
+  }, [playList, selected, shuffle]);
 
   // Keep the now-playing row visible: when the selection advances (next/prev/
   // auto-advance/click) scroll it into view. "nearest" = no jump when already
@@ -848,28 +882,9 @@ export function YouTubeMode() {
             </button>
           </div>
 
-          {/* autoplay — roll to the next result when a video ends */}
-          <div className="flex items-center justify-between border-y border-border px-[14px] py-[9px]">
-            <div className="min-w-0">
-              <div className="text-[12px] font-semibold text-text">Autoplay</div>
-              <div className="text-[11px] text-faint">Play the next result automatically</div>
-            </div>
-            <button
-              onClick={toggleAutoplay}
-              role="switch"
-              aria-checked={autoplay}
-              title={autoplay ? "Autoplay is on" : "Autoplay is off"}
-              className={clsx(
-                "relative h-[20px] w-[36px] flex-none rounded-full transition-colors",
-                autoplay ? "bg-green" : "bg-border-strong"
-              )}
-            >
-              <span
-                className="absolute top-[2px] h-[16px] w-[16px] rounded-full bg-white transition-all"
-                style={{ left: autoplay ? 18 : 2 }}
-              />
-            </button>
-          </div>
+          {/* Player controls (autoplay / shuffle / repeat) moved to the bottom
+              transport bar — see TransportBar. The tab row sits flush on the
+              filter below now. */}
 
           {/* Instant filter over the loaded list — type to narrow by title/channel. */}
           {baseRail.length > 0 && (

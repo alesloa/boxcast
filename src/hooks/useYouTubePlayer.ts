@@ -143,4 +143,14 @@ export function useYouTubePlayer(
       readyRef.current = false;
     };
   }, []);
+
+  // Restart the current video from the top. Used for repeat-one, where the
+  // selection (videoId) doesn't change so the swap effect won't re-fire.
+  const replay = () => {
+    if (!iframeRef.current || !readyRef.current || !desiredRef.current) return;
+    swappingRef.current = true;
+    post(iframeRef.current, { __mccmd: 1, cmd: "load", id: desiredRef.current });
+  };
+
+  return { replay };
 }

@@ -123,6 +123,8 @@ export function TransportBar({ videoRef }: { videoRef: RefObject<HTMLVideoElemen
   const repeat = usePlayer((s) => s.repeat);
   const toggleShuffle = usePlayer((s) => s.toggleShuffle);
   const cycleRepeat = usePlayer((s) => s.cycleRepeat);
+  const autoplay = usePlayer((s) => s.autoplay);
+  const toggleAutoplay = usePlayer((s) => s.toggleAutoplay);
 
   const togglePip = async () => {
     const v = videoRef.current;
@@ -206,7 +208,7 @@ export function TransportBar({ videoRef }: { videoRef: RefObject<HTMLVideoElemen
       {mode === "library" && <SeekBar />}
 
       {/* right controls */}
-      <div className="flex w-[260px] items-center justify-end gap-[14px]">
+      <div className="flex min-w-[260px] items-center justify-end gap-[14px]">
         <div className="flex w-[140px] items-center gap-[9px] text-dim">
           <Tooltip label={muted ? "Unmute" : "Mute"} side="top">
             <button onClick={toggleMute} aria-label="Mute" className="hover:text-text">
@@ -215,7 +217,34 @@ export function TransportBar({ videoRef }: { videoRef: RefObject<HTMLVideoElemen
           </Tooltip>
           <VolumeBar />
         </div>
-        {mode === "library" && (
+        {/* Autoplay — YouTube's master "play next when one ends" switch. Kept as a
+            labeled toggle (everyone else here is an icon). */}
+        {mode === "youtube" && (
+          <Tooltip label={autoplay ? "Autoplay on" : "Autoplay off"} side="top">
+            <button
+              onClick={toggleAutoplay}
+              role="switch"
+              aria-checked={autoplay}
+              className="flex flex-none items-center gap-[7px] rounded-[9px] px-[8px] py-[5px] transition-colors hover:bg-hover"
+            >
+              <span className={clsx("text-[11px] font-semibold", autoplay ? "text-green" : "text-dim")}>
+                Autoplay
+              </span>
+              <span
+                className={clsx(
+                  "relative h-[16px] w-[28px] flex-none rounded-full transition-colors",
+                  autoplay ? "bg-green" : "bg-border-strong"
+                )}
+              >
+                <span
+                  className="absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white transition-all"
+                  style={{ left: autoplay ? 14 : 2 }}
+                />
+              </span>
+            </button>
+          </Tooltip>
+        )}
+        {(mode === "library" || mode === "youtube") && (
           <>
             <Tooltip label="Shuffle" side="top">
               <button
