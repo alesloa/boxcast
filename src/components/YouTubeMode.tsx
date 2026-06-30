@@ -12,6 +12,19 @@ import { openSettings } from "../lib/modalWindow";
 import { useFavorites, favMeta } from "../hooks/useFavorites";
 import { loadYoutubeUi, saveYoutubeUi } from "../lib/uiState";
 import {
+  DEFAULT_GROUP,
+  loadYtGroups,
+  saveYtGroups,
+  groupOf,
+  createGroup,
+  assignToGroup,
+  renameGroup,
+  deleteGroup,
+  orderedGroups,
+  prune,
+  type YtFavGroups,
+} from "../lib/ytGroups";
+import {
   SearchIcon,
   YouTubeIcon,
   StarIcon,
@@ -20,6 +33,10 @@ import {
   XIcon,
   BanIcon,
   RotateIcon,
+  FolderIcon,
+  PencilIcon,
+  TrashIcon,
+  PlusIcon,
 } from "../lib/icons";
 import type { YoutubeItem, YoutubePlaylistInfo } from "../api/types";
 import { QueuePanel, RowControls, SelectAllControl, BulkBar, downloadMenuItems } from "@downloader";
@@ -55,6 +72,21 @@ export function YouTubeMode() {
   const [showRemoved, setShowRemoved] = useState(false); // per-playlist trash strip
   const [filter, setFilter] = useState(""); // instant client-side filter over the loaded list
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  // Saved-songs grouping (Saved tab). Persisted to localStorage on every change.
+  const [groups, setGroupsState] = useState<YtFavGroups>(() => loadYtGroups());
+  const setGroups = (g: YtFavGroups) => {
+    setGroupsState(g);
+    saveYtGroups(g);
+  };
+  // newGroupFor: a videoId to file into the group once created, or "panel" for
+  // the standalone "+ New group" control; renaming: the group being renamed.
+  const [newGroupFor, setNewGroupFor] = useState<string | null>(null);
+  const [newGroupText, setNewGroupText] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState("");
+  // Native drag-and-drop: the song being dragged + the group header hovered.
+  const [dragVideo, setDragVideo] = useState<string | null>(null);
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const skipsRef = useRef(0);
   const activeRowRef = useRef<HTMLDivElement>(null); // now-playing row, for scroll-into-view
@@ -138,17 +170,25 @@ export function YouTubeMode() {
   // Instant, client-side filter over whatever list is loaded — matches title or
   // channel as you type. No network; just narrows the in-memory list.
   const fq = filter.trim().toLowerCase();
-  const railItems = fq
-    ? baseRail.filter(
-        (v) => v.title.toLowerCase().includes(fq) || v.channelTitle.toLowerCase().includes(fq)
-      )
-    : baseRail;
+  const matchFq = (v: YoutubeItem) =>
+    v.title.toLowerCase().includes(fq) || v.channelTitle.toLowerCase().includes(fq);
+  const railItems = fq ? baseRail.filter(matchFq) : baseRail;
+  // Transport/advance scope: in the Saved tab a group plays like its own
+  // playlist — next/prev/autoplay stay within the selected song's group; in
+  // any other view it's just the visible result list.
+  const playList =
+    tab === "favorites" && selected
+      ? favVideos.filter(
+          (v) =>
+            groupOf(groups, v.videoId) === groupOf(groups, selected.videoId) && (!fq || matchFq(v))
+        )
+      : railItems;
   const msg = error instanceof Error ? error.message : String(error ?? "");
   const noKey = !!error && msg.includes("no_key");
   const hasList = !!playlistId || !!query || directItems.length > 0;
 
   const advanceNext = () => {
-    const list = railItems;
+    const list = playList;
     const idx = list.findIndex((v) => v.videoId === selected?.videoId);
     if (list.length && idx >= 0) setSelected(list[(idx + 1) % list.length]);
   };
@@ -162,7 +202,7 @@ export function YouTubeMode() {
   // so an all-blocked list can't spin forever).
   const onEmbedError = () => {
     setBlocked(selected?.videoId ?? null);
-    if (autoplay && skipsRef.current < railItems.length) {
+    if (autoplay && skipsRef.current < playList.length) {
       skipsRef.current += 1;
       advanceNext();
     }
@@ -261,6 +301,52 @@ export function YouTubeMode() {
     setTab("results");
   };
 
+  // Drop group assignments for songs that are no longer saved. Guard against the
+  // empty/loading state so a cold start (favorites query not yet resolved) can't
+  // wipe every assignment.
+  const favVideoIds = favVideos.map((v) => v.videoId).join(",");
+  useEffect(() => {
+    if (!favVideoIds) return;
+    const valid = new Set(favVideoIds.split(","));
+    setGroupsState((g) => {
+      const next = prune(g, valid);
+      if (next !== g) saveYtGroups(next);
+      return next;
+    });
+  }, [favVideoIds]);
+
+  const moveToGroup = (videoId: string, name: string) =>
+    setGroups(assignToGroup(groups, videoId, name));
+
+  // Play a whole group like a playlist: jump to the Saved tab and select its
+  // first song; the group-scoped playList carries next/prev/autoplay onward.
+  const playGroup = (name: string) => {
+    const songs = favVideos.filter((v) => groupOf(groups, v.videoId) === name);
+    if (songs.length) {
+      setTab("favorites");
+      setSelected(songs[0]);
+    }
+  };
+
+  // newGroupFor === "" → standalone "+ New group"; a videoId → also file that
+  // song into the group once it's created.
+  const submitNewGroup = () => {
+    const { next, name } = createGroup(groups, newGroupText);
+    let g = next;
+    if (name && newGroupFor) g = assignToGroup(g, newGroupFor, name);
+    setGroups(g);
+    setNewGroupFor(null);
+    setNewGroupText("");
+  };
+
+  const submitRename = () => {
+    if (renaming) setGroups(renameGroup(groups, renaming, renameText));
+    setRenaming(null);
+    setRenameText("");
+  };
+
+  const removeGroup = (name: string) => setGroups(deleteGroup(groups, name));
+
   // Parse the box: a video or playlist link/id, otherwise a normal search.
   const submitInput = async () => {
     const t = text.trim();
@@ -329,7 +415,7 @@ export function YouTubeMode() {
 
   // Register prev/next over the visible result list for the bottom bar.
   useEffect(() => {
-    const list = railItems;
+    const list = playList;
     const idx = list.findIndex((v) => v.videoId === selected?.videoId);
     setTransport(
       () => {
@@ -340,7 +426,7 @@ export function YouTubeMode() {
       }
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [railItems, selected]);
+  }, [playList, selected]);
 
   // Keep the now-playing row visible: when the selection advances (next/prev/
   // auto-advance/click) scroll it into view. "nearest" = no jump when already
@@ -348,6 +434,247 @@ export function YouTubeMode() {
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [selected?.videoId]);
+
+  // Context-menu items for a result/saved row. Saved (favorited) rows also get
+  // group controls (move to group / new group / remove from group).
+  const rowMenu = (it: YoutubeItem): MenuItem[] => {
+    const items: MenuItem[] = [
+      { icon: <PlayIcon size={12} />, label: "Play", onClick: () => setSelected(it) },
+      {
+        icon: <StarIcon size={14} filled={fav.isFav(it.videoId)} />,
+        label: fav.isFav(it.videoId) ? "Remove from favorites" : "Add to favorites",
+        onClick: () => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it }),
+      },
+    ];
+    if (fav.isFav(it.videoId)) {
+      const cur = groupOf(groups, it.videoId);
+      items.push({
+        separatorBefore: true,
+        icon: <FolderIcon size={13} />,
+        label: "Move to group",
+        submenu: [
+          ...orderedGroups(groups).map((name) => ({
+            icon: <FolderIcon size={13} />,
+            label: name === cur ? `${name} ✓` : name,
+            onClick: () => moveToGroup(it.videoId, name),
+          })),
+          {
+            separatorBefore: true,
+            icon: <PlusIcon size={13} />,
+            label: "New group…",
+            onClick: () => {
+              setNewGroupFor(it.videoId);
+              setNewGroupText("");
+            },
+          },
+        ],
+      });
+      if (cur !== DEFAULT_GROUP)
+        items.push({
+          icon: <XIcon size={13} />,
+          label: "Remove from group",
+          onClick: () => moveToGroup(it.videoId, DEFAULT_GROUP),
+        });
+    }
+    items.push(...downloadMenuItems(it));
+    return items;
+  };
+
+  // One result/saved row. In the Saved tab, favorited rows are draggable onto a
+  // group header to file them.
+  const renderRow = (it: YoutubeItem) => {
+    const draggable = tab === "favorites" && fav.isFav(it.videoId);
+    return (
+      <div
+        key={it.videoId}
+        ref={selected?.videoId === it.videoId ? activeRowRef : undefined}
+        draggable={draggable}
+        onDragStart={
+          draggable
+            ? (e) => {
+                e.dataTransfer.setData("text/plain", it.videoId);
+                e.dataTransfer.effectAllowed = "move";
+                setDragVideo(it.videoId);
+              }
+            : undefined
+        }
+        onDragEnd={
+          draggable
+            ? () => {
+                setDragVideo(null);
+                setDragOverGroup(null);
+              }
+            : undefined
+        }
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY, items: rowMenu(it) });
+        }}
+        className={clsx(
+          "group relative mb-1 flex w-full items-start gap-[10px] rounded-[9px] p-[8px]",
+          dragVideo === it.videoId && "opacity-40",
+          selected?.videoId === it.videoId
+            ? "border border-green-bd bg-green-bg"
+            : "border border-transparent hover:bg-hover"
+        )}
+      >
+        <RowControls item={it} />
+        <button
+          onClick={() => setSelected(it)}
+          className="flex min-w-0 flex-1 items-start gap-[10px] text-left"
+        >
+          <div className="relative h-[50px] w-[88px] flex-none">
+            <img
+              src={it.thumbnail}
+              alt=""
+              loading="lazy"
+              className="h-full w-full rounded-[6px] object-cover"
+            />
+            <div
+              className={clsx(
+                "absolute inset-0 grid place-items-center rounded-[6px] bg-black/45 transition-opacity",
+                selected?.videoId === it.videoId
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100"
+              )}
+            >
+              <PlayIcon size={20} className="text-white" />
+            </div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="line-clamp-2 text-[12.5px] font-medium leading-snug">{it.title}</div>
+            <div className="mt-1 truncate text-[11px] text-faint">{it.channelTitle}</div>
+          </div>
+        </button>
+        {/* Favorited indicator while idle: one star pinned to the right edge, no
+            reserved layout width. Fades out as the hover toolbar fades in. */}
+        {fav.isFav(it.videoId) && (
+          <div className="pointer-events-none absolute right-[10px] top-1/2 z-0 -translate-y-1/2 text-yellow transition-opacity group-hover:opacity-0">
+            <StarIcon size={15} filled />
+          </div>
+        )}
+        {/* Hover toolbar floats over the title's right edge with a solid backdrop,
+            so it reserves zero flow width — the title spans the whole row when
+            idle and is only covered while hovering. */}
+        <div className="pointer-events-none absolute right-[6px] top-1/2 z-10 flex -translate-y-1/2 items-center gap-[2px] rounded-[8px] bg-elev p-[3px] opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+          <button
+            onClick={() => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it })}
+            title={fav.isFav(it.videoId) ? "Remove from favorites" : "Save to favorites"}
+            className={clsx(
+              "grid h-[26px] w-[26px] place-items-center rounded-md transition-colors",
+              fav.isFav(it.videoId) ? "text-yellow" : "text-faint hover:text-text"
+            )}
+            aria-label="Toggle favorite"
+          >
+            <StarIcon size={15} filled={fav.isFav(it.videoId)} />
+          </button>
+          {tab !== "favorites" && (
+            <>
+              <button
+                onClick={() => removeItem(it)}
+                title={playlistId ? "Remove from this playlist" : "Remove from this list"}
+                aria-label="Remove"
+                className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
+              >
+                <XIcon size={14} />
+              </button>
+              <button
+                onClick={() => banItem(it)}
+                title="Ban everywhere — never show again"
+                aria-label="Ban everywhere"
+                className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
+              >
+                <BanIcon size={14} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // A draggable group header in the Saved tab: name, count, play-as-playlist,
+  // and (for named groups) rename / delete. Songs drop onto it to be filed.
+  const renderGroupHeader = (name: string, count: number) => {
+    const isDefault = name === DEFAULT_GROUP;
+    return (
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (dragVideo) setDragOverGroup(name);
+        }}
+        onDragLeave={() => setDragOverGroup((g) => (g === name ? null : g))}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (dragVideo) moveToGroup(dragVideo, name);
+          setDragVideo(null);
+          setDragOverGroup(null);
+        }}
+        className={clsx(
+          "mb-1 mt-2 flex items-center gap-[6px] rounded-[7px] px-2 py-[5px] transition-colors",
+          dragOverGroup === name ? "bg-green-bg ring-1 ring-green-bd" : "hover:bg-hover"
+        )}
+      >
+        {renaming === name ? (
+          <input
+            autoFocus
+            value={renameText}
+            onChange={(e) => setRenameText(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitRename();
+              if (e.key === "Escape") {
+                setRenaming(null);
+                setRenameText("");
+              }
+            }}
+            className="min-w-0 flex-1 rounded border border-border-strong bg-elev px-[6px] py-[2px] text-[11px] text-text outline-none"
+          />
+        ) : (
+          <>
+            <FolderIcon size={12} className="flex-none text-faint" />
+            <span className="min-w-0 flex-1 truncate text-[10px] font-bold tracking-[.6px] text-faint">
+              {name.toUpperCase()}
+              <span className="ml-[6px] font-semibold text-faint/70">{count}</span>
+            </span>
+            {count > 0 && (
+              <button
+                onClick={() => playGroup(name)}
+                title="Play group"
+                aria-label="Play group"
+                className="grid h-[22px] w-[22px] flex-none place-items-center rounded-md text-faint hover:text-text"
+              >
+                <PlayIcon size={13} />
+              </button>
+            )}
+            {!isDefault && (
+              <>
+                <button
+                  onClick={() => {
+                    setRenaming(name);
+                    setRenameText(name);
+                  }}
+                  title="Rename group"
+                  aria-label="Rename group"
+                  className="grid h-[22px] w-[22px] flex-none place-items-center rounded-md text-faint hover:text-text"
+                >
+                  <PencilIcon size={13} />
+                </button>
+                <button
+                  onClick={() => removeGroup(name)}
+                  title="Delete group (keeps the songs)"
+                  aria-label="Delete group"
+                  className="grid h-[22px] w-[22px] flex-none place-items-center rounded-md text-faint hover:text-red"
+                >
+                  <TrashIcon size={13} />
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
 
   if (noKey) {
     return (
@@ -574,9 +901,9 @@ export function YouTubeMode() {
                         ? "No results."
                         : "Results appear here."}
               </div>
-            ) : (
+            ) : tab === "favorites" ? (
               <>
-                {tab === "favorites" && favPlaylists.length > 0 && (
+                {favPlaylists.length > 0 && (
                   <>
                     <div className="px-2 pb-1 pt-1 text-[10px] font-bold tracking-[.6px] text-faint">
                       PLAYLISTS
@@ -628,114 +955,51 @@ export function YouTubeMode() {
                         </button>
                       </div>
                     ))}
-                    {favVideos.length > 0 && (
-                      <div className="px-2 pb-1 pt-3 text-[10px] font-bold tracking-[.6px] text-faint">
-                        VIDEOS
-                      </div>
-                    )}
                   </>
                 )}
-                {railItems.map((it) => (
-                  <div
-                    key={it.videoId}
-                    ref={selected?.videoId === it.videoId ? activeRowRef : undefined}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setMenu({
-                        x: e.clientX,
-                        y: e.clientY,
-                        items: [
-                          { icon: <PlayIcon size={12} />, label: "Play", onClick: () => setSelected(it) },
-                          {
-                            icon: <StarIcon size={14} filled={fav.isFav(it.videoId)} />,
-                            label: fav.isFav(it.videoId) ? "Remove from favorites" : "Add to favorites",
-                            onClick: () => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it }),
-                          },
-                          ...downloadMenuItems(it),
-                        ],
-                      });
-                    }}
-                    className={clsx(
-                      "group relative mb-1 flex w-full items-start gap-[10px] rounded-[9px] p-[8px]",
-                      selected?.videoId === it.videoId
-                        ? "border border-green-bd bg-green-bg"
-                        : "border border-transparent hover:bg-hover"
-                    )}
-                  >
-                    <RowControls item={it} />
-                    <button onClick={() => setSelected(it)} className="flex min-w-0 flex-1 items-start gap-[10px] text-left">
-                      <div className="relative h-[50px] w-[88px] flex-none">
-                        <img
-                          src={it.thumbnail}
-                          alt=""
-                          loading="lazy"
-                          className="h-full w-full rounded-[6px] object-cover"
-                        />
-                        <div
-                          className={clsx(
-                            "absolute inset-0 grid place-items-center rounded-[6px] bg-black/45 transition-opacity",
-                            selected?.videoId === it.videoId
-                              ? "opacity-100"
-                              : "opacity-0 group-hover:opacity-100"
-                          )}
-                        >
-                          <PlayIcon size={20} className="text-white" />
-                        </div>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="line-clamp-2 text-[12.5px] font-medium leading-snug">
-                          {it.title}
-                        </div>
-                        <div className="mt-1 truncate text-[11px] text-faint">{it.channelTitle}</div>
-                      </div>
-                    </button>
-                    {/* Favorited indicator while idle: one star pinned to the right
-                        edge, no reserved layout width. Fades out as the hover
-                        toolbar fades in. */}
-                    {fav.isFav(it.videoId) && (
-                      <div className="pointer-events-none absolute right-[10px] top-1/2 z-0 -translate-y-1/2 text-yellow transition-opacity group-hover:opacity-0">
-                        <StarIcon size={15} filled />
-                      </div>
-                    )}
-                    {/* Hover toolbar floats over the title's right edge with a solid
-                        backdrop, so it reserves zero flow width — the title spans the
-                        whole row when idle and is only covered while hovering. */}
-                    <div className="pointer-events-none absolute right-[6px] top-1/2 z-10 flex -translate-y-1/2 items-center gap-[2px] rounded-[8px] bg-elev p-[3px] opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-                      <button
-                        onClick={() => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it })}
-                        title={fav.isFav(it.videoId) ? "Remove from favorites" : "Save to favorites"}
-                        className={clsx(
-                          "grid h-[26px] w-[26px] place-items-center rounded-md transition-colors",
-                          fav.isFav(it.videoId) ? "text-yellow" : "text-faint hover:text-text"
-                        )}
-                        aria-label="Toggle favorite"
-                      >
-                        <StarIcon size={15} filled={fav.isFav(it.videoId)} />
-                      </button>
-                      {tab !== "favorites" && (
-                        <>
-                          <button
-                            onClick={() => removeItem(it)}
-                            title={playlistId ? "Remove from this playlist" : "Remove from this list"}
-                            aria-label="Remove"
-                            className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
-                          >
-                            <XIcon size={14} />
-                          </button>
-                          <button
-                            onClick={() => banItem(it)}
-                            title="Ban everywhere — never show again"
-                            aria-label="Ban everywhere"
-                            className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
-                          >
-                            <BanIcon size={14} />
-                          </button>
-                        </>
-                      )}
+                {orderedGroups(groups).map((name) => {
+                  const songs = favVideos.filter((v) => groupOf(groups, v.videoId) === name);
+                  const shown = fq ? songs.filter(matchFq) : songs;
+                  // Hide an empty default group; while filtering, hide no-match groups.
+                  if (fq && shown.length === 0) return null;
+                  if (!fq && name === DEFAULT_GROUP && songs.length === 0) return null;
+                  return (
+                    <div key={name}>
+                      {renderGroupHeader(name, shown.length)}
+                      {shown.map(renderRow)}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+                {newGroupFor !== null ? (
+                  <input
+                    autoFocus
+                    value={newGroupText}
+                    onChange={(e) => setNewGroupText(e.target.value)}
+                    onBlur={submitNewGroup}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitNewGroup();
+                      if (e.key === "Escape") {
+                        setNewGroupFor(null);
+                        setNewGroupText("");
+                      }
+                    }}
+                    placeholder="Group name…"
+                    className="mt-2 w-full rounded-[7px] border border-border-strong bg-elev px-[8px] py-[5px] text-[12px] text-text outline-none"
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      setNewGroupFor("");
+                      setNewGroupText("");
+                    }}
+                    className="mt-2 flex w-full items-center gap-[6px] rounded-[7px] border border-dashed border-border px-2 py-[6px] text-[11px] font-semibold text-faint hover:border-border-strong hover:text-dim"
+                  >
+                    <PlusIcon size={13} /> New group
+                  </button>
+                )}
               </>
+            ) : (
+              <>{railItems.map(renderRow)}</>
             )}
           </div>
 
