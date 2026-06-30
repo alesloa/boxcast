@@ -51,6 +51,7 @@ import {
   PencilIcon,
   TrashIcon,
   PlusIcon,
+  DownIcon,
 } from "../lib/icons";
 import type { YoutubeItem, YoutubePlaylistInfo } from "../api/types";
 import {
@@ -471,6 +472,7 @@ export function YouTubeMode() {
   const [savingName, setSavingName] = useState<string | null>(null); // null = closed
   const [renamingColl, setRenamingColl] = useState<string | null>(null);
   const [renameCollText, setRenameCollText] = useState("");
+  const [mixOpen, setMixOpen] = useState(false); // build-bar chips collapsed by default to save space
 
   const submitSaveCollection = () => {
     const { next, created } = createCollection(collections, savingName ?? "", sources);
@@ -1140,38 +1142,32 @@ export function YouTubeMode() {
 
           {mergeMode && (
             <div className="mx-[12px] mb-1 rounded-[10px] border border-border-strong bg-elev p-[10px]">
-              <div className="mb-[8px] flex items-center justify-between">
-                <span className="text-[10px] font-bold tracking-[.5px] text-green">
-                  {activeCollection
-                    ? `COLLECTION · ${activeCollection.name.toUpperCase()}`
-                    : `BUILDING · ${sources.length} PLAYLISTS`}
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={() => setMixOpen((o) => !o)}
+                  title={mixOpen ? "Collapse playlists" : "Expand playlists"}
+                  className="flex min-w-0 items-center gap-[6px] text-[10px] font-bold tracking-[.5px] text-green"
+                >
+                  <DownIcon
+                    size={12}
+                    className={clsx("flex-none transition-transform", !mixOpen && "-rotate-90")}
+                  />
+                  <span className="truncate">
+                    {activeCollection
+                      ? `COLLECTION · ${activeCollection.name.toUpperCase()}`
+                      : `BUILDING · ${sources.length} PLAYLISTS`}
+                  </span>
+                </button>
                 <button
                   onClick={clearMix}
-                  className="text-[11px] text-faint hover:text-text"
+                  className="flex-none text-[11px] text-faint hover:text-text"
                 >
                   Clear all
                 </button>
               </div>
-              <div className="flex flex-wrap gap-[6px]">
-                {sources.map((s) => (
-                  <span
-                    key={s.playlistId}
-                    className="flex items-center gap-[6px] rounded-full border border-border bg-bg px-[9px] py-[3px] text-[11px] text-dim"
-                  >
-                    <span className="max-w-[130px] truncate">{s.title}</span>
-                    <button
-                      onClick={() => removeSourceFromMix(s.playlistId)}
-                      title="Remove this playlist from the mix"
-                      aria-label="Remove playlist"
-                      className="text-faint hover:text-red"
-                    >
-                      <XIcon size={11} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="mt-[8px] flex items-center gap-[8px] text-[11px] text-faint">
+
+              {/* Counts stay visible even when collapsed — the at-a-glance payoff. */}
+              <div className="mt-[8px] flex flex-wrap items-center gap-x-[8px] text-[11px] text-faint">
                 <span>
                   <b className="text-text">{visibleItems.length.toLocaleString("en-US")}</b> songs
                 </span>
@@ -1181,28 +1177,51 @@ export function YouTubeMode() {
                   <span className="text-red">· {Object.keys(merged.errors).length} failed</span>
                 )}
               </div>
-              {!activeCollection &&
-                (savingName !== null ? (
-                  <input
-                    autoFocus
-                    value={savingName}
-                    onChange={(e) => setSavingName(e.target.value)}
-                    onBlur={submitSaveCollection}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") submitSaveCollection();
-                      if (e.key === "Escape") setSavingName(null);
-                    }}
-                    placeholder="Collection name…"
-                    className="mt-[8px] w-full rounded-[7px] border border-border-strong bg-bg px-[8px] py-[5px] text-[12px] text-text outline-none"
-                  />
-                ) : (
-                  <button
-                    onClick={() => setSavingName("")}
-                    className="mt-[8px] flex items-center gap-[6px] rounded-[7px] border border-dashed border-border px-2 py-[5px] text-[11px] font-semibold text-faint hover:border-border-strong hover:text-dim"
-                  >
-                    <StarIcon size={12} /> Save as collection
-                  </button>
-                ))}
+
+              {mixOpen && (
+                <>
+                  <div className="mt-[8px] flex flex-wrap gap-[6px]">
+                    {sources.map((s) => (
+                      <span
+                        key={s.playlistId}
+                        className="flex items-center gap-[6px] rounded-full border border-border bg-bg px-[9px] py-[3px] text-[11px] text-dim"
+                      >
+                        <span className="max-w-[130px] truncate">{s.title}</span>
+                        <button
+                          onClick={() => removeSourceFromMix(s.playlistId)}
+                          title="Remove this playlist from the mix"
+                          aria-label="Remove playlist"
+                          className="text-faint hover:text-red"
+                        >
+                          <XIcon size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {!activeCollection &&
+                    (savingName !== null ? (
+                      <input
+                        autoFocus
+                        value={savingName}
+                        onChange={(e) => setSavingName(e.target.value)}
+                        onBlur={submitSaveCollection}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") submitSaveCollection();
+                          if (e.key === "Escape") setSavingName(null);
+                        }}
+                        placeholder="Collection name…"
+                        className="mt-[8px] w-full rounded-[7px] border border-border-strong bg-bg px-[8px] py-[5px] text-[12px] text-text outline-none"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setSavingName("")}
+                        className="mt-[8px] flex items-center gap-[6px] rounded-[7px] border border-dashed border-border px-2 py-[5px] text-[11px] font-semibold text-faint hover:border-border-strong hover:text-dim"
+                      >
+                        <StarIcon size={12} /> Save as collection
+                      </button>
+                    ))}
+                </>
+              )}
             </div>
           )}
 
