@@ -58,6 +58,11 @@ export const api = {
     invoke<YtHidden[]>("yt_hidden_for_playlist", { playlistId }),
   ytBans: () => invoke<YtHidden[]>("yt_bans"),
 
+  // Durable key/value in SQLite (survives restart, unlike the webview's
+  // localStorage). Used for YouTube collections.
+  kvGet: (key: string) => invoke<string | null>("kv_get", { key }),
+  kvSet: (key: string, value: string) => invoke<void>("kv_set", { key, value }),
+
   favoritesList: () => invoke<Favorite[]>("favorites_list"),
   favoritesAdd: (fav: FavoriteInput) => invoke<Favorite>("favorites_add", { fav }),
   favoritesRemove: (source: string, ref: string) =>

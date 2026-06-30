@@ -159,6 +159,18 @@ pub fn settings_set(state: State<'_, AppState>, patch: SettingsPatch) -> Result<
 }
 
 #[tauri::command]
+pub fn kv_get(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::kv_get(&conn, &key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn kv_set(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::kv_set(&conn, &key, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn yt_hide(state: State<'_, AppState>, playlist_id: String, v: YtHideInput) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::yt_hide(&conn, &playlist_id, v).map_err(|e| e.to_string())

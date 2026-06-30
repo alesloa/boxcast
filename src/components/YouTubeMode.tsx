@@ -98,7 +98,7 @@ export function YouTubeMode() {
   const [selected, setSelected] = useState<YoutubeItem | null>(yu.selected);
   const [sources, setSources] = useState<SourceRef[]>(yu.sources);
   const [activeCollectionId, setActiveCollectionId] = useState<string | null>(yu.activeCollectionId);
-  const [collections, setCollectionsState] = useState<Collection[]>(() => loadCollections());
+  const [collections, setCollectionsState] = useState<Collection[]>([]);
   const setCollections = (list: Collection[]) => {
     setCollectionsState(list);
     saveCollections(list);
@@ -137,6 +137,11 @@ export function YouTubeMode() {
   useEffect(() => {
     saveYoutubeUi({ text, query, playlistId, directItems, tab, selected, sources, activeCollectionId });
   }, [text, query, playlistId, directItems, tab, selected, sources, activeCollectionId]);
+
+  // Collections are durable in SQLite (not localStorage). Load once on mount.
+  useEffect(() => {
+    loadCollections().then(setCollectionsState).catch(() => {});
+  }, []);
 
   // Clear the quick-filter whenever the underlying list changes (new playlist,
   // new search, tab switch) so a stale query never hides a freshly loaded list.
@@ -353,9 +358,10 @@ export function YouTubeMode() {
       if (activeCollectionId) {
         setCollections(setSongRemoved(collections, activeCollectionId, it.videoId, true));
         const cid = activeCollectionId;
-        showToast("Removed from collection", () =>
-          setCollections(setSongRemoved(loadCollections(), cid, it.videoId, false))
-        );
+        showToast("Removed from collection", async () => {
+          const fresh = await loadCollections();
+          setCollections(setSongRemoved(fresh, cid, it.videoId, false));
+        });
       } else {
         hideItem(it.videoId);
       }

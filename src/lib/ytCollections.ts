@@ -1,7 +1,10 @@
 // Named multi-playlist "collections". A collection stores only its source
 // playlist IDs (+ a friendly title each) and the videoIds the user removed from
-// it — NOT the songs. Opening it re-fetches + re-merges live. Kept in
-// localStorage; losing it only forgets the grouping, never any favorite or list.
+// it — NOT the songs. Opening it re-fetches + re-merges live. Persisted durably
+// in SQLite (via the kv_* commands), NOT localStorage: the packaged webview only
+// flushes localStorage on a clean quit, so a crash/force-quit would lose them.
+
+import { api } from "../api/client";
 
 export interface SourceRef {
   playlistId: string;
@@ -17,11 +20,11 @@ export interface Collection {
   updatedAt: number;
 }
 
-const KEY = "mc.yt.collections";
+const KEY = "yt_collections";
 
-export function loadCollections(): Collection[] {
+export async function loadCollections(): Promise<Collection[]> {
   try {
-    const v = localStorage.getItem(KEY);
+    const v = await api.kvGet(KEY);
     if (!v) return [];
     const p = JSON.parse(v) as Collection[];
     return Array.isArray(p) ? p : [];
@@ -30,12 +33,12 @@ export function loadCollections(): Collection[] {
   }
 }
 
+// Fire-and-forget: callers update React state synchronously, this persists in
+// the background to SQLite (durable across restarts/crashes).
 export function saveCollections(list: Collection[]): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(list));
-  } catch {
-    /* quota / serialization — best effort */
-  }
+  api.kvSet(KEY, JSON.stringify(list)).catch(() => {
+    /* best effort */
+  });
 }
 
 export function getCollection(list: Collection[], id: string): Collection | null {

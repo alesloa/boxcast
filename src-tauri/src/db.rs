@@ -177,6 +177,18 @@ fn write_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<
     Ok(())
 }
 
+/// Generic durable key/value over the `settings` table. For app data that must
+/// survive restarts but doesn't warrant its own schema (e.g. YouTube
+/// collections). localStorage in the packaged webview only flushes on a clean
+/// quit, so durable data lives here instead.
+pub fn kv_get(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    read_setting(conn, key)
+}
+
+pub fn kv_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    write_setting(conn, key, value)
+}
+
 pub fn get_settings(conn: &Connection) -> rusqlite::Result<Settings> {
     let youtube_api_key = read_setting(conn, "youtube_api_key")?.filter(|s| !s.is_empty());
     let nsfw = read_setting(conn, "nsfw")?
@@ -418,6 +430,19 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn kv_round_trips() {
+        let conn = mem();
+        assert_eq!(kv_get(&conn, "yt_collections").unwrap(), None);
+        kv_set(&conn, "yt_collections", "[{\"id\":\"a\"}]").unwrap();
+        assert_eq!(
+            kv_get(&conn, "yt_collections").unwrap().as_deref(),
+            Some("[{\"id\":\"a\"}]")
+        );
+        kv_set(&conn, "yt_collections", "[]").unwrap();
+        assert_eq!(kv_get(&conn, "yt_collections").unwrap().as_deref(), Some("[]"));
     }
 
     #[test]

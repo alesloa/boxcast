@@ -108,6 +108,8 @@ pub fn run() {
             commands::recents_add,
             commands::settings_get,
             commands::settings_set,
+            commands::kv_get,
+            commands::kv_set,
             commands::yt_hide,
             commands::yt_ban,
             commands::yt_restore,
