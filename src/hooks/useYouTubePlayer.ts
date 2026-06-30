@@ -25,7 +25,12 @@ function post(iframe: HTMLIFrameElement | null, msg: unknown) {
 export function useYouTubePlayer(
   hostRef: RefObject<HTMLDivElement>,
   videoId: string | null,
-  cbs?: { onEnded?: () => void; onError?: (code: number) => void; onPlaying?: () => void }
+  cbs?: {
+    onEnded?: () => void;
+    onError?: (code: number) => void;
+    onPlaying?: () => void;
+    onTime?: (cur: number, dur: number) => void;
+  }
 ) {
   const proxyBase = useProxyBase();
   // YouTube allow-lists `http://localhost` as an embedding origin but rejects
@@ -93,6 +98,9 @@ export function useYouTubePlayer(
           setPlaying(false);
           cbsRef.current?.onEnded?.(); // autoplay-next, when enabled
         }
+      } else if (m.type === "time") {
+        // Periodic playback position while playing — drives the end-screen shield.
+        cbsRef.current?.onTime?.(m.data?.cur ?? 0, m.data?.dur ?? 0);
       } else if (m.type === "error") {
         // 2 invalid id, 5 html5, 100 removed, 101/150 embedding disabled, 153 origin
         swappingRef.current = false;

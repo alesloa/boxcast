@@ -63,6 +63,7 @@ export function YouTubeMode() {
   const setYoutubeCount = usePlayer((s) => s.setYoutubeCount);
   const setNowPlaying = usePlayer((s) => s.setNowPlaying);
   const setPlaying = usePlayer((s) => s.setPlaying);
+  const togglePlay = usePlayer((s) => s.togglePlay);
   const setTransport = usePlayer((s) => s.setTransport);
   const showToast = usePlayer((s) => s.showToast);
   // Player controls live in the bottom transport bar now; YouTube just reads
@@ -81,6 +82,7 @@ export function YouTubeMode() {
   const [tab, setTab] = useState<"results" | "favorites">(yu.tab);
   const [selected, setSelected] = useState<YoutubeItem | null>(yu.selected);
   const [blocked, setBlocked] = useState<string | null>(null); // videoId that won't embed
+  const [nearEnd, setNearEnd] = useState(false); // in the final ~20s, where end-screen ads appear
   const [hidden, setHidden] = useState<Set<string>>(() => new Set()); // rail items hidden this session
   const [showRemoved, setShowRemoved] = useState(false); // per-playlist trash strip
   const [filter, setFilter] = useState(""); // instant client-side filter over the loaded list
@@ -262,11 +264,19 @@ export function YouTubeMode() {
     setBlocked(null);
   };
 
+  // Playback position → flip the end-screen shield on only for the last ~20s,
+  // where YouTube overlays its clickable suggested-video cards. setState bails
+  // when the boolean is unchanged, so the 2 Hz ticks are cheap.
+  const onTime = (cur: number, dur: number) => {
+    setNearEnd(dur > 0 && dur - cur <= 20 && dur - cur >= 0);
+  };
+
   // Drive the embedded player from the shared transport store (bottom bar).
   const { replay } = useYouTubePlayer(hostRef, selected?.videoId ?? null, {
     onEnded: onVideoEnded,
     onError: onEmbedError,
     onPlaying,
+    onTime,
   });
   replayRef.current = replay;
 
@@ -504,9 +514,11 @@ export function YouTubeMode() {
 
   // Keep the now-playing row visible: when the selection advances (next/prev/
   // auto-advance/click) scroll it into view. "nearest" = no jump when already
-  // on screen.
+  // on screen. Also drop the end-screen shield so a fresh video doesn't inherit
+  // the previous one's "near end" state until its own time ticks arrive.
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setNearEnd(false);
   }, [selected?.videoId]);
 
   // Context-menu items for a result/saved row. Saved (favorited) rows also get
@@ -831,6 +843,22 @@ export function YouTubeMode() {
           <div className="relative flex-1 overflow-hidden rounded-[12px] border border-border-strong bg-black">
             {/* The YouTube IFrame Player API mounts its iframe inside this host. */}
             <div ref={hostRef} className="absolute inset-0 h-full w-full" />
+            {/* End-screen click-shield: only the final ~20s, where YouTube
+                overlays its clickable suggested-video cards. A transparent layer
+                over everything EXCEPT the bottom 48px (native control bar) — so
+                those end cards can't be clicked, while the scrub bar and the rest
+                of the controls stay usable. The rest of the video is untouched:
+                normal click-to-pause, hover controls, and scrubbing all work.
+                Clicking the shield toggles play/pause. */}
+            {selected && blocked !== selected.videoId && nearEnd && (
+              <div
+                onClick={togglePlay}
+                title="Play / pause"
+                aria-hidden
+                className="absolute inset-x-0 top-0 z-20 cursor-pointer"
+                style={{ bottom: 48 }}
+              />
+            )}
             {!selected && (
               <div className="absolute inset-0 grid place-items-center text-dim">
                 <div className="text-center">
