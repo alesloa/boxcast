@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
 import { api } from "../api/client";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
@@ -11,6 +12,19 @@ import { parseYouTubeInput } from "../lib/youtube";
 import { openSettings } from "../lib/modalWindow";
 import { useFavorites, favMeta } from "../hooks/useFavorites";
 import { loadYoutubeUi, saveYoutubeUi } from "../lib/uiState";
+import { useMergedSources } from "../hooks/useMergedSources";
+import {
+  loadCollections,
+  saveCollections,
+  createCollection,
+  renameCollection,
+  deleteCollection,
+  addSource,
+  removeSource,
+  setSongRemoved,
+  type Collection,
+  type SourceRef,
+} from "../lib/ytCollections";
 import {
   DEFAULT_GROUP,
   loadYtGroups,
@@ -81,6 +95,17 @@ export function YouTubeMode() {
   const [directItems, setDirectItems] = useState<YoutubeItem[]>(yu.directItems); // a pasted single video
   const [tab, setTab] = useState<"results" | "favorites">(yu.tab);
   const [selected, setSelected] = useState<YoutubeItem | null>(yu.selected);
+  const [sources, setSources] = useState<SourceRef[]>(yu.sources);
+  const [activeCollectionId, setActiveCollectionId] = useState<string | null>(yu.activeCollectionId);
+  const [collections, setCollectionsState] = useState<Collection[]>(() => loadCollections());
+  const setCollections = (list: Collection[]) => {
+    setCollectionsState(list);
+    saveCollections(list);
+  };
+  const mergeMode = sources.length > 0;
+  const activeCollection = activeCollectionId
+    ? collections.find((c) => c.id === activeCollectionId) ?? null
+    : null;
   const [blocked, setBlocked] = useState<string | null>(null); // videoId that won't embed
   const [nearEnd, setNearEnd] = useState(false); // in the final ~20s, where end-screen ads appear
   const [hidden, setHidden] = useState<Set<string>>(() => new Set()); // rail items hidden this session
@@ -103,13 +128,14 @@ export function YouTubeMode() {
   const [dragVideo, setDragVideo] = useState<string | null>(null);
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const railParentRef = useRef<HTMLDivElement>(null);
   const skipsRef = useRef(0);
   const activeRowRef = useRef<HTMLDivElement>(null); // now-playing row, for scroll-into-view
 
   // persist this tab's browsing state so it restores on return / restart
   useEffect(() => {
-    saveYoutubeUi({ text, query, playlistId, directItems, tab, selected });
-  }, [text, query, playlistId, directItems, tab, selected]);
+    saveYoutubeUi({ text, query, playlistId, directItems, tab, selected, sources, activeCollectionId });
+  }, [text, query, playlistId, directItems, tab, selected, sources, activeCollectionId]);
 
   // Clear the quick-filter whenever the underlying list changes (new playlist,
   // new search, tab switch) so a stale query never hides a freshly loaded list.
@@ -151,6 +177,9 @@ export function YouTubeMode() {
   });
   const plInfo = playlistInfo.data ?? null;
 
+  // Merge mode: stream + de-dupe every source playlist into one list.
+  const merged = useMergedSources(sources);
+
   // Persistent deletions: global bans (everywhere) + this playlist's removals.
   const bans = useQuery({
     queryKey: ["yt-bans"],
@@ -167,19 +196,30 @@ export function YouTubeMode() {
   const bannedIds = new Set((bans.data ?? []).map((b) => b.videoId));
   const playlistHiddenIds = new Set((playlistHidden.data ?? []).map((h) => h.videoId));
 
-  const error = playlistId ? playlist.error : directItems.length ? null : search.error;
-  const isFetching = playlistId ? playlist.isFetching : search.isFetching;
-  const items: YoutubeItem[] = playlistId
-    ? playlist.data?.items ?? []
-    : directItems.length
-      ? directItems
-      : search.data?.items ?? [];
-  // Session hide (this view) + global ban (everywhere) + per-playlist removal.
+  const error = mergeMode ? null : playlistId ? playlist.error : directItems.length ? null : search.error;
+  const isFetching = mergeMode
+    ? merged.loading
+    : playlistId
+      ? playlist.isFetching
+      : search.isFetching;
+  const items: YoutubeItem[] = mergeMode
+    ? merged.mergedItems
+    : playlistId
+      ? playlist.data?.items ?? []
+      : directItems.length
+        ? directItems
+        : search.data?.items ?? [];
+  // Session hide + global ban + per-source removal. In merge mode the per-source
+  // removal comes from the open collection's removedIds (organize); in single
+  // mode it's the server-side per-playlist hide, unchanged.
+  const collRemoved = activeCollection ? new Set(activeCollection.removedIds) : null;
   const visibleItems = items.filter(
     (v) =>
       !hidden.has(v.videoId) &&
       !bannedIds.has(v.videoId) &&
-      (!playlistId || !playlistHiddenIds.has(v.videoId))
+      (mergeMode
+        ? !(collRemoved?.has(v.videoId) ?? false)
+        : !playlistId || !playlistHiddenIds.has(v.videoId))
   );
   const baseRail = tab === "favorites" ? favVideos : visibleItems;
   // Instant, client-side filter over whatever list is loaded — matches title or
@@ -200,7 +240,17 @@ export function YouTubeMode() {
       : railItems;
   const msg = error instanceof Error ? error.message : String(error ?? "");
   const noKey = !!error && msg.includes("no_key");
-  const hasList = !!playlistId || !!query || directItems.length > 0;
+  const hasList = mergeMode || !!playlistId || !!query || directItems.length > 0;
+
+  // Virtualized rail for the flat results/merge list — only on-screen rows live
+  // in the DOM, so a merge of any size scrolls smoothly. The grouped favorites
+  // view is rendered normally (manageable sizes).
+  const rowVirtual = useVirtualizer({
+    count: tab === "results" ? railItems.length : 0,
+    getScrollElement: () => railParentRef.current,
+    estimateSize: () => 74,
+    overscan: 10,
+  });
 
   // Restart-current-video handle, filled in once the player hook returns (used
   // for repeat-one). Held in a ref so the end handler below can reach it.
@@ -293,9 +343,23 @@ export function YouTubeMode() {
     thumbnail: it.thumbnail,
   });
 
-  // X — in a playlist: remove from THIS playlist forever; in search: session hide.
+  // X — merge mode: remove from the open collection (persisted) or, for an
+  // unsaved mix, hide for this session. Single playlist: remove forever
+  // (server). Search: session hide.
   const removeItem = async (it: YoutubeItem) => {
     if (it.videoId === selected?.videoId) advanceNext();
+    if (mergeMode) {
+      if (activeCollectionId) {
+        setCollections(setSongRemoved(collections, activeCollectionId, it.videoId, true));
+        const cid = activeCollectionId;
+        showToast("Removed from collection", () =>
+          setCollections(setSongRemoved(loadCollections(), cid, it.videoId, false))
+        );
+      } else {
+        hideItem(it.videoId);
+      }
+      return;
+    }
     if (playlistId) {
       const pid = playlistId;
       await api.ytHide(pid, hideInput(it));
@@ -352,6 +416,95 @@ export function YouTubeMode() {
     setQuery("");
     setPlaylistId(pl.playlistId);
     setTab("results");
+  };
+
+  // Add the playlist currently in the input box to the merge (does not replace).
+  // Seeds the mix with the current single playlist first, then appends the new
+  // one. Entering merge mode clears the single-playlist query so its server-side
+  // features don't fight the merged view.
+  const addToMix = async () => {
+    const parsed = parseYouTubeInput(text.trim());
+    if (parsed.kind !== "playlist") {
+      showToast("Paste a playlist link to add it to the mix");
+      return;
+    }
+    let info: SourceRef = { playlistId: parsed.id, title: "Playlist" };
+    try {
+      const meta = await api.youtubePlaylistInfo(parsed.id);
+      if (meta?.title) info = { playlistId: parsed.id, title: meta.title };
+    } catch {
+      /* keep the fallback title */
+    }
+    const seed: SourceRef[] = sources.length
+      ? sources
+      : playlistId
+        ? [{ playlistId, title: plInfo?.title ?? "Playlist" }]
+        : [];
+    if (seed.some((s) => s.playlistId === info.playlistId)) {
+      showToast("That playlist is already in the mix");
+      return;
+    }
+    setPlaylistId(null);
+    setQuery("");
+    setDirectItems([]);
+    setHidden(new Set());
+    setText("");
+    setTab("results");
+    const next = [...seed, info];
+    setSources(next);
+    if (activeCollectionId) setCollections(addSource(collections, activeCollectionId, info));
+  };
+
+  const removeSourceFromMix = (playlistId: string) => {
+    const next = sources.filter((s) => s.playlistId !== playlistId);
+    setSources(next);
+    if (activeCollectionId) setCollections(removeSource(collections, activeCollectionId, playlistId));
+    if (next.length === 0) setActiveCollectionId(null);
+  };
+
+  const clearMix = () => {
+    setSources([]);
+    setActiveCollectionId(null);
+    setSelected(null);
+  };
+
+  const [savingName, setSavingName] = useState<string | null>(null); // null = closed
+  const [renamingColl, setRenamingColl] = useState<string | null>(null);
+  const [renameCollText, setRenameCollText] = useState("");
+
+  const submitSaveCollection = () => {
+    const { next, created } = createCollection(collections, savingName ?? "", sources);
+    if (created) {
+      setCollections(next);
+      setActiveCollectionId(created.id);
+    }
+    setSavingName(null);
+  };
+
+  // Open a saved collection: its sources drive the merge; future edits persist.
+  const openCollection = (c: Collection) => {
+    setBlocked(null);
+    skipsRef.current = 0;
+    setHidden(new Set());
+    setDirectItems([]);
+    setSelected(null);
+    setQuery("");
+    setPlaylistId(null);
+    setText("");
+    setTab("results");
+    setActiveCollectionId(c.id);
+    setSources(c.sources);
+  };
+
+  const submitRenameCollection = () => {
+    if (renamingColl) setCollections(renameCollection(collections, renamingColl, renameCollText));
+    setRenamingColl(null);
+    setRenameCollText("");
+  };
+
+  const removeCollection = (id: string) => {
+    setCollections(deleteCollection(collections, id));
+    if (activeCollectionId === id) clearMix();
   };
 
   // Drop group assignments for songs that are no longer saved. Guard against the
@@ -517,8 +670,14 @@ export function YouTubeMode() {
   // on screen. Also drop the end-screen shield so a fresh video doesn't inherit
   // the previous one's "near end" state until its own time ticks arrive.
   useEffect(() => {
-    activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (tab === "results") {
+      const idx = railItems.findIndex((v) => v.videoId === selected?.videoId);
+      if (idx >= 0) rowVirtual.scrollToIndex(idx, { align: "auto" });
+    } else {
+      activeRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
     setNearEnd(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.videoId]);
 
   // Context-menu items for a result/saved row. Saved (favorited) rows also get
@@ -819,6 +978,14 @@ export function YouTubeMode() {
         >
           Go
         </button>
+        <button
+          type="button"
+          onClick={addToMix}
+          title="Add this playlist to the mix (don't replace)"
+          className="flex flex-none items-center gap-[5px] rounded-[8px] border border-dashed border-green-bd bg-elev px-3 py-[7px] text-[12.5px] font-semibold text-green hover:bg-hover"
+        >
+          <PlusIcon size={14} /> Add to mix
+        </button>
         {playlistId && (
           <button
             type="button"
@@ -971,14 +1138,82 @@ export function YouTubeMode() {
             </div>
           )}
 
+          {mergeMode && (
+            <div className="mx-[12px] mb-1 rounded-[10px] border border-border-strong bg-elev p-[10px]">
+              <div className="mb-[8px] flex items-center justify-between">
+                <span className="text-[10px] font-bold tracking-[.5px] text-green">
+                  {activeCollection
+                    ? `COLLECTION · ${activeCollection.name.toUpperCase()}`
+                    : `BUILDING · ${sources.length} PLAYLISTS`}
+                </span>
+                <button
+                  onClick={clearMix}
+                  className="text-[11px] text-faint hover:text-text"
+                >
+                  Clear all
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-[6px]">
+                {sources.map((s) => (
+                  <span
+                    key={s.playlistId}
+                    className="flex items-center gap-[6px] rounded-full border border-border bg-bg px-[9px] py-[3px] text-[11px] text-dim"
+                  >
+                    <span className="max-w-[130px] truncate">{s.title}</span>
+                    <button
+                      onClick={() => removeSourceFromMix(s.playlistId)}
+                      title="Remove this playlist from the mix"
+                      aria-label="Remove playlist"
+                      className="text-faint hover:text-red"
+                    >
+                      <XIcon size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-[8px] flex items-center gap-[8px] text-[11px] text-faint">
+                <span>
+                  <b className="text-text">{visibleItems.length.toLocaleString("en-US")}</b> songs
+                </span>
+                {merged.removed > 0 && <span>· {merged.removed.toLocaleString("en-US")} dupes removed</span>}
+                {merged.loading && <span>· loading more…</span>}
+                {Object.keys(merged.errors).length > 0 && (
+                  <span className="text-red">· {Object.keys(merged.errors).length} failed</span>
+                )}
+              </div>
+              {!activeCollection &&
+                (savingName !== null ? (
+                  <input
+                    autoFocus
+                    value={savingName}
+                    onChange={(e) => setSavingName(e.target.value)}
+                    onBlur={submitSaveCollection}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitSaveCollection();
+                      if (e.key === "Escape") setSavingName(null);
+                    }}
+                    placeholder="Collection name…"
+                    className="mt-[8px] w-full rounded-[7px] border border-border-strong bg-bg px-[8px] py-[5px] text-[12px] text-text outline-none"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setSavingName("")}
+                    className="mt-[8px] flex items-center gap-[6px] rounded-[7px] border border-dashed border-border px-2 py-[5px] text-[11px] font-semibold text-faint hover:border-border-strong hover:text-dim"
+                  >
+                    <StarIcon size={12} /> Save as collection
+                  </button>
+                ))}
+            </div>
+          )}
+
           {/* Select-all + bulk-download bar sit under the autoplay row (private
               build only). BulkBar shows MP3/MP4 as soon as songs are selected. */}
           <SelectAllControl items={railItems} />
           <BulkBar />
 
-          <div className="flex-1 overflow-auto px-[10px] pb-[14px] pt-[6px]">
+          <div ref={railParentRef} className="flex-1 overflow-auto px-[10px] pb-[14px] pt-[6px]">
             {(tab === "favorites"
-              ? favPlaylists.length === 0 && railItems.length === 0
+              ? favPlaylists.length === 0 && railItems.length === 0 && collections.length === 0
               : railItems.length === 0) ? (
               <div className="px-2 pt-10 text-center text-[12.5px] text-faint">
                 {fq
@@ -994,6 +1229,74 @@ export function YouTubeMode() {
             ) : tab === "favorites" ? (
               <>
                 <DownloadAllPlaylists playlists={favPlaylists} />
+                {collections.length > 0 && (
+                  <>
+                    <div className="px-2 pb-1 pt-1 text-[10px] font-bold tracking-[.6px] text-faint">
+                      COLLECTIONS
+                    </div>
+                    {collections.map((c) => {
+                      const songCount = c.sources.length;
+                      return (
+                        <div
+                          key={c.id}
+                          className="group mb-1 flex w-full items-center gap-[10px] rounded-[9px] border border-transparent p-[8px] hover:bg-hover"
+                        >
+                          {renamingColl === c.id ? (
+                            <input
+                              autoFocus
+                              value={renameCollText}
+                              onChange={(e) => setRenameCollText(e.target.value)}
+                              onBlur={submitRenameCollection}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") submitRenameCollection();
+                                if (e.key === "Escape") setRenamingColl(null);
+                              }}
+                              className="min-w-0 flex-1 rounded border border-border-strong bg-elev px-[6px] py-[3px] text-[12px] text-text outline-none"
+                            />
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => openCollection(c)}
+                                className="flex min-w-0 flex-1 items-center gap-[10px] text-left"
+                              >
+                                <div className="grid h-[44px] w-[60px] flex-none place-items-center rounded-[6px] bg-green-bg text-green">
+                                  <PlaylistIcon size={18} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="line-clamp-2 text-[12.5px] font-medium leading-snug">
+                                    {c.name}
+                                  </div>
+                                  <div className="mt-1 truncate text-[11px] text-faint">
+                                    Collection · {songCount} playlist{songCount === 1 ? "" : "s"}
+                                  </div>
+                                </div>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRenamingColl(c.id);
+                                  setRenameCollText(c.name);
+                                }}
+                                title="Rename collection"
+                                aria-label="Rename collection"
+                                className="grid h-7 w-7 flex-none place-items-center rounded-md text-faint opacity-0 transition-colors hover:text-text group-hover:opacity-100"
+                              >
+                                <PencilIcon size={13} />
+                              </button>
+                              <button
+                                onClick={() => removeCollection(c.id)}
+                                title="Delete collection"
+                                aria-label="Delete collection"
+                                className="grid h-7 w-7 flex-none place-items-center rounded-md text-faint opacity-0 transition-colors hover:text-red group-hover:opacity-100"
+                              >
+                                <TrashIcon size={13} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
                 {favPlaylists.length > 0 && (
                   <>
                     <div className="px-2 pb-1 pt-1 text-[10px] font-bold tracking-[.6px] text-faint">
@@ -1091,7 +1394,19 @@ export function YouTubeMode() {
                 )}
               </>
             ) : (
-              <>{railItems.map(renderRow)}</>
+              <div style={{ height: rowVirtual.getTotalSize(), position: "relative", width: "100%" }}>
+                {rowVirtual.getVirtualItems().map((vi) => (
+                  <div
+                    key={railItems[vi.index].videoId}
+                    data-index={vi.index}
+                    ref={rowVirtual.measureElement}
+                    className="absolute left-0 top-0 w-full"
+                    style={{ transform: `translateY(${vi.start}px)` }}
+                  >
+                    {renderRow(railItems[vi.index])}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 

@@ -5,6 +5,7 @@
 // durable data (favorites, library, deletions) stays in SQLite.
 
 import type { Channel, Station, YoutubeItem, LibraryView } from "../api/types";
+import type { SourceRef } from "./ytCollections";
 
 function loadMerge<T extends object>(key: string, fallback: T): T {
   try {
@@ -62,6 +63,8 @@ export interface YoutubeUi {
   directItems: YoutubeItem[];
   tab: "results" | "favorites";
   selected: YoutubeItem | null;
+  sources: SourceRef[];           // active merge set; empty = single/search mode
+  activeCollectionId: string | null; // set when a saved collection is open
 }
 const YT_DEFAULT: YoutubeUi = {
   text: "",
@@ -70,6 +73,8 @@ const YT_DEFAULT: YoutubeUi = {
   directItems: [],
   tab: "results",
   selected: null,
+  sources: [],
+  activeCollectionId: null,
 };
 export const loadYoutubeUi = () => loadMerge("mc.ui.youtube", YT_DEFAULT);
 export const saveYoutubeUi = (v: YoutubeUi) => save("mc.ui.youtube", v);
