@@ -204,6 +204,14 @@ export function YouTubeMode() {
   // for repeat-one). Held in a ref so the end handler below can reach it.
   const replayRef = useRef<() => void>(() => {});
 
+  // Play history so Back returns the actual last song played (not a fresh random
+  // pick under shuffle). Stores the item objects, so Back works even across
+  // playlists/groups. `goingBack` guards the recorder from re-pushing the item we
+  // just popped.
+  const historyRef = useRef<YoutubeItem[]>([]);
+  const lastSelRef = useRef<YoutubeItem | null>(selected);
+  const goingBackRef = useRef(false);
+
   // Move to the next track. Honors shuffle (random pick, never the current one);
   // otherwise sequential with wrap. Used by manual next, hide/remove, and the
   // embed-error skip.
@@ -451,13 +459,27 @@ export function YouTubeMode() {
     });
   }, [selected, setNowPlaying, setPlaying]);
 
-  // Register prev/next over the visible result list for the bottom bar. Manual
-  // next/prev honor shuffle (random pick) and always wrap — independent of the
-  // autoplay gate, which only governs what happens when a video ends on its own.
+  // Record play history on every forward move (next, click, auto-advance, random
+  // shuffle pick) so Back can return to the real previous song. A move caused by
+  // Back itself is not recorded — it pops, it doesn't push.
+  useEffect(() => {
+    if (selected?.videoId === lastSelRef.current?.videoId) return;
+    if (goingBackRef.current) {
+      goingBackRef.current = false;
+    } else if (lastSelRef.current) {
+      historyRef.current.push(lastSelRef.current);
+      if (historyRef.current.length > 200) historyRef.current.shift();
+    }
+    lastSelRef.current = selected;
+  }, [selected]);
+
+  // Register prev/next for the bottom bar. Next moves forward (random under
+  // shuffle, else sequential wrap). Back walks the play history — the actual last
+  // song played — and only falls back to sequential prev when there's no history.
   useEffect(() => {
     const list = playList;
     const idx = list.findIndex((v) => v.videoId === selected?.videoId);
-    const pick = (dir: 1 | -1) => {
+    const next = () => {
       if (!list.length) return;
       if (shuffle) {
         if (list.length === 1) return setSelected(list[0]);
@@ -465,9 +487,18 @@ export function YouTubeMode() {
         while (r === idx) r = Math.floor(Math.random() * list.length);
         return setSelected(list[r]);
       }
-      setSelected(list[(idx + dir + list.length) % list.length]);
+      setSelected(list[(idx + 1) % list.length]);
     };
-    setTransport(() => pick(1), () => pick(-1));
+    const back = () => {
+      const prevItem = historyRef.current.pop();
+      if (prevItem) {
+        goingBackRef.current = true; // this move is a rewind, don't re-record it
+        setSelected(prevItem);
+        return;
+      }
+      if (list.length) setSelected(list[(idx - 1 + list.length) % list.length]);
+    };
+    setTransport(next, back);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playList, selected, shuffle]);
 
@@ -589,27 +620,28 @@ export function YouTubeMode() {
             <div className="mt-1 truncate text-[11px] text-faint">{it.channelTitle}</div>
           </div>
         </button>
-        {/* Favorited indicator while idle: one star pinned to the right edge, no
-            reserved layout width. Fades out as the hover toolbar fades in. */}
+        {/* Favorited indicator while idle: one star pinned to the bottom-right
+            corner, no reserved layout width. Fades out as the hover toolbar fades
+            in — pinned to the same corner so it doesn't jump. */}
         {fav.isFav(it.videoId) && (
-          <div className="pointer-events-none absolute right-[10px] top-1/2 z-0 -translate-y-1/2 text-yellow transition-opacity group-hover:opacity-0">
-            <StarIcon size={15} filled />
+          <div className="pointer-events-none absolute bottom-[8px] right-[10px] z-0 text-yellow transition-opacity group-hover:opacity-0">
+            <StarIcon size={13} filled />
           </div>
         )}
-        {/* Hover toolbar floats over the title's right edge with a solid backdrop,
-            so it reserves zero flow width — the title spans the whole row when
-            idle and is only covered while hovering. */}
-        <div className="pointer-events-none absolute right-[6px] top-1/2 z-10 flex -translate-y-1/2 items-center gap-[2px] rounded-[8px] bg-elev p-[3px] opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+        {/* Hover toolbar floats at the card's bottom-right with a solid backdrop,
+            so it reserves zero flow width — the row text spans the whole card when
+            idle and is only covered there while hovering. */}
+        <div className="pointer-events-none absolute bottom-[6px] right-[6px] z-10 flex items-center gap-[2px] rounded-[8px] bg-elev p-[2px] opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
           <button
             onClick={() => fav.toggle({ ref: it.videoId, name: it.title, logo: it.thumbnail, meta: it })}
             title={fav.isFav(it.videoId) ? "Remove from favorites" : "Save to favorites"}
             className={clsx(
-              "grid h-[26px] w-[26px] place-items-center rounded-md transition-colors",
+              "grid h-[22px] w-[22px] place-items-center rounded-md transition-colors",
               fav.isFav(it.videoId) ? "text-yellow" : "text-faint hover:text-text"
             )}
             aria-label="Toggle favorite"
           >
-            <StarIcon size={15} filled={fav.isFav(it.videoId)} />
+            <StarIcon size={13} filled={fav.isFav(it.videoId)} />
           </button>
           {tab !== "favorites" && (
             <>
@@ -617,17 +649,17 @@ export function YouTubeMode() {
                 onClick={() => removeItem(it)}
                 title={playlistId ? "Remove from this playlist" : "Remove from this list"}
                 aria-label="Remove"
-                className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
+                className="grid h-[22px] w-[22px] place-items-center rounded-md text-faint transition-colors hover:text-red"
               >
-                <XIcon size={14} />
+                <XIcon size={12} />
               </button>
               <button
                 onClick={() => banItem(it)}
                 title="Ban everywhere — never show again"
                 aria-label="Ban everywhere"
-                className="grid h-[26px] w-[26px] place-items-center rounded-md text-faint transition-colors hover:text-red"
+                className="grid h-[22px] w-[22px] place-items-center rounded-md text-faint transition-colors hover:text-red"
               >
-                <BanIcon size={14} />
+                <BanIcon size={12} />
               </button>
             </>
           )}
