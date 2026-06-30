@@ -8,6 +8,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePlayer } from "../store/player";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
 import { parseYouTubeInput } from "../lib/youtube";
+import { openSettings } from "../lib/modalWindow";
 import { useFavorites, favMeta } from "../hooks/useFavorites";
 import { loadYoutubeUi, saveYoutubeUi } from "../lib/uiState";
 import {
@@ -33,7 +34,6 @@ function openOnYouTube(videoId: string) {
 }
 
 export function YouTubeMode() {
-  const setSettingsOpen = usePlayer((s) => s.setSettingsOpen);
   const setYoutubeCount = usePlayer((s) => s.setYoutubeCount);
   const setNowPlaying = usePlayer((s) => s.setNowPlaying);
   const setPlaying = usePlayer((s) => s.setPlaying);
@@ -362,7 +362,7 @@ export function YouTubeMode() {
             locally and used only for search.
           </p>
           <button
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => void openSettings()}
             className="mt-4 rounded-[8px] bg-green px-4 py-2 text-[12.5px] font-semibold text-[var(--c-on-accent)] hover:bg-[var(--c-green-h)]"
           >
             Open Settings

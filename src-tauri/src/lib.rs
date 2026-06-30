@@ -3,6 +3,7 @@ mod catalog;
 mod commands;
 mod db;
 mod library;
+mod modal;
 mod proxy;
 mod radio;
 mod state;
@@ -131,6 +132,8 @@ pub fn run() {
             audio_edit::mp3_probe,
             audio_edit::mp3_cut,
             audio_edit::track_trash,
+            modal::open_modal_window,
+            modal::close_modal_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
