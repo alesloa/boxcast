@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
 
 // Tauri expects a fixed dev port it can point its webview at (devUrl in
 // tauri.conf.json). We use an uncommon, non-default port and strictPort:true so
@@ -25,6 +26,15 @@ export default defineConfig({
     watch: {
       // tauri's rust sources are watched by tauri itself
       ignored: ["**/src-tauri/**"],
+    },
+  },
+  resolve: {
+    alias: {
+      // Private downloader: real module when VITE_DOWNLOADER=1, inert stub otherwise.
+      // @ts-expect-error process is provided by Node at config-eval time
+      "@downloader": process.env.VITE_DOWNLOADER
+        ? resolve(__dirname, "src/private/downloader/index.tsx")
+        : resolve(__dirname, "src/lib/downloaderStub.tsx"),
     },
   },
   // produce a relative-asset build so the bundled webview can load it

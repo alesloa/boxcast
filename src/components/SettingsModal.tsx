@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import { isTauri } from "../lib/os";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../lib/accent";
 import { EyeIcon, EyeOffIcon } from "../lib/icons";
+import { SettingsDownloadRow } from "@downloader";
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -24,8 +25,24 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   );
 }
 
-export function SettingsModal() {
-  const setSettingsOpen = usePlayer((s) => s.setSettingsOpen);
+// State that lives only in the main window's store/localStorage (not the DB),
+// pushed back to it over the "settings:apply" event when running as a pop-out.
+export interface SettingsApply {
+  accent?: string | null;
+  audioLang?: string;
+  volume?: number;
+}
+
+interface SettingsModalProps {
+  /** Rendered as its own OS window (frameless, fills the window) vs in-app overlay. */
+  inWindow?: boolean;
+  /** Close handler: closes the window (pop-out) or hides the overlay (web). */
+  onClose: () => void;
+  /** Pop-out only: push live/save changes back to the main window. */
+  onChanged?: (payload: SettingsApply) => void;
+}
+
+export function SettingsModal({ inWindow = false, onClose, onChanged }: SettingsModalProps) {
   const setVolume = usePlayer((s) => s.setVolume);
   const preferredAudioLang = usePlayer((s) => s.preferredAudioLang);
   const setPreferredAudioLang = usePlayer((s) => s.setPreferredAudioLang);
@@ -33,6 +50,13 @@ export function SettingsModal() {
   const setAccent = usePlayer((s) => s.setAccent);
   const currentAccent = accent ?? DEFAULT_ACCENT;
   const qc = useQueryClient();
+
+  // Accent applies instantly. In-app that recolors live; as a pop-out window it
+  // also tells the main window so its accent updates immediately too.
+  const chooseAccent = (value: string | null) => {
+    setAccent(value);
+    if (inWindow) onChanged?.({ accent: value });
+  };
 
   const { data } = useQuery({
     queryKey: ["settings"],
@@ -78,7 +102,10 @@ export function SettingsModal() {
       setPreferredAudioLang(audioLang.trim());
       qc.invalidateQueries({ queryKey: ["settings"] });
       qc.invalidateQueries({ queryKey: ["catalog"] });
-      setSettingsOpen(false);
+      // Pop-out: hand the non-DB, main-window-only state back across the gap.
+      if (inWindow)
+        onChanged?.({ accent: accent ?? null, audioLang: audioLang.trim(), volume: vol / 100 });
+      onClose();
     } finally {
       setSaving(false);
     }
@@ -94,26 +121,29 @@ export function SettingsModal() {
     }
   };
 
-  return (
+  const card = (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-sm"
-      onClick={() => setSettingsOpen(false)}
+      className={clsx(
+        "flex flex-col overflow-hidden rounded-[12px] border border-border-strong bg-elev text-text",
+        inWindow ? "h-screen w-screen" : "max-h-[88vh] w-[460px] shadow-[0_30px_80px_rgba(0,0,0,.6)]"
+      )}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[460px] overflow-hidden rounded-[12px] border border-border-strong bg-elev text-text shadow-[0_30px_80px_rgba(0,0,0,.6)]"
+        className="flex items-center justify-between border-b border-border px-5 py-[14px]"
+        {...(inWindow ? { "data-tauri-drag-region": true } : {})}
       >
-        <div className="flex items-center justify-between border-b border-border px-5 py-[14px]">
-          <div className="text-[14px] font-semibold">Settings</div>
-          <button
-            onClick={() => setSettingsOpen(false)}
-            className="grid h-7 w-7 place-items-center rounded-md text-dim hover:bg-hover hover:text-text"
-          >
-            ✕
-          </button>
+        <div className="text-[14px] font-semibold" {...(inWindow ? { "data-tauri-drag-region": true } : {})}>
+          Settings
         </div>
+        <button
+          onClick={onClose}
+          className="grid h-7 w-7 place-items-center rounded-md text-dim hover:bg-hover hover:text-text"
+        >
+          ✕
+        </button>
+      </div>
 
-        <div className="flex flex-col gap-5 px-5 py-5">
+      <div className="flex flex-1 flex-col gap-5 overflow-auto px-5 py-5">
           {/* youtube key */}
           <div>
             <div className="text-[12.5px] font-semibold">YouTube API key</div>
@@ -143,6 +173,8 @@ export function SettingsModal() {
             </div>
           </div>
 
+          <SettingsDownloadRow />
+
           {/* accent color */}
           <div>
             <div className="flex items-center justify-between">
@@ -153,7 +185,7 @@ export function SettingsModal() {
                 </p>
               </div>
               {accent && (
-                <button onClick={() => setAccent(null)} className="text-[11.5px] text-dim hover:text-text">
+                <button onClick={() => chooseAccent(null)} className="text-[11.5px] text-dim hover:text-text">
                   Reset
                 </button>
               )}
@@ -162,7 +194,7 @@ export function SettingsModal() {
               {ACCENT_PRESETS.map((c) => (
                 <button
                   key={c}
-                  onClick={() => setAccent(c)}
+                  onClick={() => chooseAccent(c)}
                   aria-label={`Accent ${c}`}
                   title={c}
                   className={clsx(
@@ -183,7 +215,7 @@ export function SettingsModal() {
                 <input
                   type="color"
                   value={currentAccent}
-                  onChange={(e) => setAccent(e.target.value)}
+                  onChange={(e) => chooseAccent(e.target.value)}
                   className="absolute inset-0 cursor-pointer opacity-0"
                 />
               </label>
@@ -293,7 +325,7 @@ export function SettingsModal() {
 
         <div className="flex justify-end gap-2 border-t border-border px-5 py-[14px]">
           <button
-            onClick={() => setSettingsOpen(false)}
+            onClick={onClose}
             className="rounded-[8px] px-4 py-2 text-[12.5px] text-dim hover:text-text"
           >
             Cancel
@@ -306,7 +338,17 @@ export function SettingsModal() {
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
-      </div>
+    </div>
+  );
+
+  // Pop-out window: the card IS the window. Web/overlay: dim backdrop behind it.
+  if (inWindow) return card;
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()}>{card}</div>
     </div>
   );
 }

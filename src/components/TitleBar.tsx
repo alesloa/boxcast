@@ -1,4 +1,5 @@
 import { usePlayer } from "../store/player";
+import { openSettings } from "../lib/modalWindow";
 import { MoonIcon, SettingsIcon, SunIcon, TvIcon } from "../lib/icons";
 import { Tooltip } from "./Tooltip";
 import {
@@ -8,7 +9,6 @@ import {
 } from "./WindowControls";
 
 export function TitleBar() {
-  const setSettingsOpen = usePlayer((s) => s.setSettingsOpen);
   const theme = usePlayer((s) => s.theme);
   const toggleTheme = usePlayer((s) => s.toggleTheme);
 
@@ -45,7 +45,7 @@ export function TitleBar() {
 
       <Tooltip label="Settings">
         <button
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => void openSettings()}
           aria-label="Settings"
           className="grid h-[30px] w-[30px] place-items-center rounded-lg text-dim transition-colors hover:bg-hover hover:text-text"
         >

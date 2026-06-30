@@ -71,12 +71,19 @@ const YT_PLAYER_HTML: &str = r##"<!doctype html>
 <div id="p"></div>
 <script>
 (function(){
-  var player=null, ready=false, pLoad=null, pVol=null, pMute=null;
+  var player=null, ready=false, pLoad=null, pVol=null, pMute=null, timer=null;
   function send(t,d){ try{ parent.postMessage({__mcyt:1,type:t,data:d}, '*'); }catch(e){} }
+  function startTimer(){
+    if(timer) return;
+    timer=setInterval(function(){
+      try{ send('time',{cur:player.getCurrentTime(),dur:player.getDuration()}); }catch(_){}
+    },500);
+  }
+  function stopTimer(){ if(timer){clearInterval(timer);timer=null;} }
   window.onYouTubeIframeAPIReady=function(){
     player=new YT.Player('p',{
       width:'100%',height:'100%',
-      playerVars:{autoplay:0,playsinline:1,rel:0,modestbranding:1},
+      playerVars:{autoplay:0,playsinline:1,rel:0,modestbranding:1,cc_load_policy:0,iv_load_policy:3},
       events:{
         onReady:function(){
           ready=true;
@@ -85,7 +92,15 @@ const YT_PLAYER_HTML: &str = r##"<!doctype html>
           if(pLoad){player.loadVideoById(pLoad);pLoad=null;}
           send('ready');
         },
-        onStateChange:function(e){ send('state',e.data); },
+        onStateChange:function(e){ send('state',e.data); if(e.data===1){startTimer();}else{stopTimer();} },
+        // Captions stay OFF by default — even when a video forces them on. The
+        // captions module fires onApiChange when it loads (per video); we clear
+        // the active track each time. The CC button is left intact, so the user
+        // can still turn captions on manually whenever they want.
+        onApiChange:function(){
+          try{player.setOption('captions','track',{});}catch(_){}
+          try{player.setOption('cc','track',{});}catch(_){}
+        },
         onError:function(e){ send('error',e.data); }
       }
     });

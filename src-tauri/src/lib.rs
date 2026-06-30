@@ -3,10 +3,14 @@ mod catalog;
 mod commands;
 mod db;
 mod library;
+mod modal;
 mod proxy;
 mod radio;
 mod state;
 mod youtube;
+
+#[cfg(feature = "downloader")]
+mod downloader;
 
 use std::sync::Mutex;
 
@@ -40,9 +44,16 @@ fn bind_proxy_listener() -> std::io::Result<std::net::TcpListener> {
 /// Tauri entry point. Sets up the shared HTTP client, the SQLite database in
 /// the app data dir, and the local media proxy on a free loopback port (>20000).
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(feature = "downloader")]
+    {
+        builder = builder.plugin(downloader::init());
+    }
+
+    builder
         .setup(|app| {
             // Shared HTTP client with a real desktop UA and transparent
             // gzip/brotli decompression.
@@ -121,6 +132,8 @@ pub fn run() {
             audio_edit::mp3_probe,
             audio_edit::mp3_cut,
             audio_edit::track_trash,
+            modal::open_modal_window,
+            modal::close_modal_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -104,6 +104,13 @@ body {
   cursor: default;
 }
 
+/* Pop-out modal windows render a single full-window modal (no app chrome); the
+   page stays transparent so the modal card's rounded corners look clean. */
+body.modal-window,
+body.modal-window #root {
+  background: transparent;
+}
+
 /* inputs should still allow text selection / caret */
 input,
 textarea {

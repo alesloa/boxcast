@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 import { usePlayer } from "./store/player";
 import { useCatalog } from "./hooks/useCatalog";
 import { useFavorites } from "./hooks/useFavorites";
 import { filterChannels } from "./lib/filter";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useSuppressNativeMenu } from "./hooks/useSuppressNativeMenu";
+import { useZoom } from "./hooks/useZoom";
 import { api } from "./api/client";
 import { isTauri } from "./lib/os";
 import { applyAccent, clearAccent } from "./lib/accent";
@@ -37,6 +39,8 @@ export default function App() {
   const current = usePlayer((s) => s.current);
   const playChannel = usePlayer((s) => s.playChannel);
   const settingsOpen = usePlayer((s) => s.settingsOpen);
+  const setSettingsOpen = usePlayer((s) => s.setSettingsOpen);
+  const qc = useQueryClient();
 
   const theme = usePlayer((s) => s.theme);
   const accent = usePlayer((s) => s.accent);
@@ -55,6 +59,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   useKeyboardShortcuts(videoRef);
   useSuppressNativeMenu();
+  useZoom();
 
   // Auto-advance over dead streams, but stop after a run of failures so an
   // all-dead slice of the list can't churn through thousands of channels.
@@ -168,6 +173,27 @@ export default function App() {
     api.settingsGet().then((s) => setVolume(s.defaultVolume)).catch(() => {});
   }, [setVolume]);
 
+  // The pop-out Settings window saves to the DB itself, but accent / audio
+  // language / volume live only in THIS window's store — it pushes those back
+  // over "settings:apply". Re-apply them and refetch the DB-backed settings.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let un: (() => void) | undefined;
+    listen<{ accent?: string | null; audioLang?: string; volume?: number }>(
+      "settings:apply",
+      (e) => {
+        const p = e.payload;
+        const st = usePlayer.getState();
+        if ("accent" in p) st.setAccent(p.accent ?? null);
+        if (p.audioLang !== undefined) st.setPreferredAudioLang(p.audioLang);
+        if (p.volume !== undefined) st.setVolume(p.volume);
+        qc.invalidateQueries({ queryKey: ["settings"] });
+        qc.invalidateQueries({ queryKey: ["catalog"] });
+      }
+    ).then((f) => (un = f));
+    return () => un?.();
+  }, [qc]);
+
   // record recently-played
   useEffect(() => {
     if (!current || !isTauri()) return;
@@ -207,7 +233,7 @@ export default function App() {
         <StatusBar source={SOURCE_LABEL[mode]} channelCount={filtered.length} />
       </div>
 
-      {settingsOpen && <SettingsModal />}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <Toast />
       <GlobalContextMenu />
     </div>

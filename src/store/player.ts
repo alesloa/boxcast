@@ -41,6 +41,7 @@ const LS_SUBCOLOR = "mc.subColor";
 const LS_AUDIOLANG = "mc.audioLang";
 const LS_SHUFFLE = "mc.shuffle";
 const LS_REPEAT = "mc.repeat";
+const LS_AUTOPLAY = "mc.ytAutoplay";
 
 function initialRepeat(): "off" | "all" | "one" {
   const v = localStorage.getItem(LS_REPEAT);
@@ -106,6 +107,10 @@ interface PlayerState {
   repeat: "off" | "all" | "one";
   toggleShuffle: () => void;
   cycleRepeat: () => void;
+  // YouTube auto-advance master switch (when a result/video ends, roll to the
+  // next one). Shuffle + repeat shape HOW it advances while this is on.
+  autoplay: boolean;
+  toggleAutoplay: () => void;
 
   position: number;
   duration: number;
@@ -235,6 +240,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   queueIndex: -1,
   shuffle: localStorage.getItem(LS_SHUFFLE) === "1",
   repeat: initialRepeat(),
+  autoplay: localStorage.getItem(LS_AUTOPLAY) !== "0", // default on
   position: 0,
   duration: 0,
   seek: () => {},
@@ -338,6 +344,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       const repeat = order[s.repeat];
       localStorage.setItem(LS_REPEAT, repeat);
       return { repeat };
+    }),
+  toggleAutoplay: () =>
+    set((s) => {
+      const autoplay = !s.autoplay;
+      localStorage.setItem(LS_AUTOPLAY, autoplay ? "1" : "0");
+      return { autoplay };
     }),
   setPosition: (position) => set({ position }),
   setDuration: (duration) => set({ duration }),
