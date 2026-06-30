@@ -39,7 +39,16 @@ import {
   PlusIcon,
 } from "../lib/icons";
 import type { YoutubeItem, YoutubePlaylistInfo } from "../api/types";
-import { QueuePanel, RowControls, SelectAllControl, BulkBar, downloadMenuItems } from "@downloader";
+import {
+  QueuePanel,
+  RowControls,
+  SelectAllControl,
+  BulkBar,
+  downloadMenuItems,
+  DownloadAllPlaylists,
+  PlaylistDownloadButton,
+  GroupDownloadButton,
+} from "@downloader";
 
 // In the Tauri webview window.open() is a no-op — it doesn't reach the system
 // browser. Route through the opener plugin; fall back to window.open in a plain
@@ -594,8 +603,8 @@ export function YouTubeMode() {
   };
 
   // A draggable group header in the Saved tab: name, count, play-as-playlist,
-  // and (for named groups) rename / delete. Songs drop onto it to be filed.
-  const renderGroupHeader = (name: string, count: number) => {
+  // download, and (for named groups) rename / delete. Songs drop onto it.
+  const renderGroupHeader = (name: string, count: number, songs: YoutubeItem[]) => {
     const isDefault = name === DEFAULT_GROUP;
     return (
       <div
@@ -647,6 +656,10 @@ export function YouTubeMode() {
                 <PlayIcon size={13} />
               </button>
             )}
+            <GroupDownloadButton
+              name={name}
+              items={songs.map((s) => ({ videoId: s.videoId, title: s.title }))}
+            />
             {!isDefault && (
               <>
                 <button
@@ -883,8 +896,10 @@ export function YouTubeMode() {
             </div>
           )}
 
-          {/* Select-all sits left-aligned under the autoplay row (private build only). */}
+          {/* Select-all + bulk-download bar sit under the autoplay row (private
+              build only). BulkBar shows MP3/MP4 as soon as songs are selected. */}
           <SelectAllControl items={railItems} />
+          <BulkBar />
 
           <div className="flex-1 overflow-auto px-[10px] pb-[14px] pt-[6px]">
             {(tab === "favorites"
@@ -903,6 +918,7 @@ export function YouTubeMode() {
               </div>
             ) : tab === "favorites" ? (
               <>
+                <DownloadAllPlaylists playlists={favPlaylists} />
                 {favPlaylists.length > 0 && (
                   <>
                     <div className="px-2 pb-1 pt-1 text-[10px] font-bold tracking-[.6px] text-faint">
@@ -943,6 +959,7 @@ export function YouTubeMode() {
                             </div>
                           </div>
                         </button>
+                        <PlaylistDownloadButton playlist={pl} />
                         <button
                           onClick={() =>
                             fav.toggle({ ref: pl.playlistId, name: pl.title, logo: pl.thumbnail, meta: pl })
@@ -965,7 +982,7 @@ export function YouTubeMode() {
                   if (!fq && name === DEFAULT_GROUP && songs.length === 0) return null;
                   return (
                     <div key={name}>
-                      {renderGroupHeader(name, shown.length)}
+                      {renderGroupHeader(name, shown.length, songs)}
                       {shown.map(renderRow)}
                     </div>
                   );
@@ -1002,8 +1019,6 @@ export function YouTubeMode() {
               <>{railItems.map(renderRow)}</>
             )}
           </div>
-
-          <BulkBar />
 
           {/* per-playlist trash: songs removed from this playlist, restorable */}
           {playlistId && (playlistHidden.data?.length ?? 0) > 0 && (
