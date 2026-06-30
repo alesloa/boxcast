@@ -76,7 +76,7 @@ const YT_PLAYER_HTML: &str = r##"<!doctype html>
   window.onYouTubeIframeAPIReady=function(){
     player=new YT.Player('p',{
       width:'100%',height:'100%',
-      playerVars:{autoplay:0,playsinline:1,rel:0,modestbranding:1},
+      playerVars:{autoplay:0,playsinline:1,rel:0,modestbranding:1,cc_load_policy:0},
       events:{
         onReady:function(){
           ready=true;
@@ -86,6 +86,14 @@ const YT_PLAYER_HTML: &str = r##"<!doctype html>
           send('ready');
         },
         onStateChange:function(e){ send('state',e.data); },
+        // Captions stay OFF by default — even when a video forces them on. The
+        // captions module fires onApiChange when it loads (per video); we clear
+        // the active track each time. The CC button is left intact, so the user
+        // can still turn captions on manually whenever they want.
+        onApiChange:function(){
+          try{player.setOption('captions','track',{});}catch(_){}
+          try{player.setOption('cc','track',{});}catch(_){}
+        },
         onError:function(e){ send('error',e.data); }
       }
     });
